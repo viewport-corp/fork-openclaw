@@ -5,6 +5,12 @@ services:
     env_file:
       - path: .env.viewport-fresh
         required: true
+    environment:
+      OPENCLAW_GATEWAY_PORT: "18789"
+      OPENCLAW_BRIDGE_PORT: "18790"
+    environment:
+      OPENCLAW_GATEWAY_PORT: "18789"
+      OPENCLAW_BRIDGE_PORT: "18790"
     build:
       context: .
       dockerfile: Dockerfile
