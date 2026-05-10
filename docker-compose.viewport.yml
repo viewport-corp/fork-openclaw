@@ -1,0 +1,40 @@
+# Viewport production override for @TheViewportBot fresh OpenClaw.
+# No secrets in this file; .env.viewport-fresh supplies runtime env.
+services:
+  openclaw-gateway:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        OPENCLAW_EXTENSIONS: ${OPENCLAW_EXTENSIONS:-codex,openai,anthropic,openrouter,litellm,nvidia,google,groq,tavily,firecrawl,brave,duckduckgo,exa,browser,canvas,telegram,discord,slack,webhooks,memory-core,memory-lancedb,memory-wiki,document-extract,file-transfer,github-copilot,cloudflare-ai-gateway,ollama,vllm,opencode,opencode-go,perplexity,qwen,deepseek,xai,fal,image-generation-core,media-understanding-core,video-generation-core,tts-local-cli,elevenlabs}
+        OPENCLAW_INSTALL_DOCKER_CLI: "1"
+        OPENCLAW_INSTALL_BROWSER: "1"
+        OPENCLAW_DOCKER_APT_PACKAGES: ${OPENCLAW_DOCKER_APT_PACKAGES:-openssh-client gh jq rsync dnsutils iproute2 iputils-ping netcat-openbsd procps lsof less vim-tiny python3 python3-pip ca-certificates curl git}
+    volumes:
+      - ${OPENCLAW_CONFIG_DIR:-${HOME:-/tmp}/.openclaw}:/home/node/.openclaw
+      - ${OPENCLAW_WORKSPACE_DIR:-${HOME:-/tmp}/.openclaw/workspace}:/home/node/.openclaw/workspace
+      - /var/run/docker.sock:/var/run/docker.sock
+      - /srv/viewport:/srv/viewport
+      - /opt/platformx:/opt/platformx
+      - /srv/viewport/runtime/openclaw-fresh/ssh:/home/node/.ssh:ro
+    group_add:
+      - "${DOCKER_GID:-999}"
+
+  openclaw-cli:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        OPENCLAW_EXTENSIONS: ${OPENCLAW_EXTENSIONS:-codex,openai,anthropic,openrouter,litellm,nvidia,google,groq,tavily,firecrawl,brave,duckduckgo,exa,browser,canvas,telegram,discord,slack,webhooks,memory-core,memory-lancedb,memory-wiki,document-extract,file-transfer,github-copilot,cloudflare-ai-gateway,ollama,vllm,opencode,opencode-go,perplexity,qwen,deepseek,xai,fal,image-generation-core,media-understanding-core,video-generation-core,tts-local-cli,elevenlabs}
+        OPENCLAW_INSTALL_DOCKER_CLI: "1"
+        OPENCLAW_INSTALL_BROWSER: "1"
+        OPENCLAW_DOCKER_APT_PACKAGES: ${OPENCLAW_DOCKER_APT_PACKAGES:-openssh-client gh jq rsync dnsutils iproute2 iputils-ping netcat-openbsd procps lsof less vim-tiny python3 python3-pip ca-certificates curl git}
+    volumes:
+      - ${OPENCLAW_CONFIG_DIR:-${HOME:-/tmp}/.openclaw}:/home/node/.openclaw
+      - ${OPENCLAW_WORKSPACE_DIR:-${HOME:-/tmp}/.openclaw/workspace}:/home/node/.openclaw/workspace
+      - /var/run/docker.sock:/var/run/docker.sock
+      - /srv/viewport:/srv/viewport
+      - /opt/platformx:/opt/platformx
+      - /srv/viewport/runtime/openclaw-fresh/ssh:/home/node/.ssh:ro
+    group_add:
+      - "${DOCKER_GID:-999}"
