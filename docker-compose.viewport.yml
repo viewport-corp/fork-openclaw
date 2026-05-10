@@ -2,6 +2,9 @@
 # No secrets in this file; .env.viewport-fresh supplies runtime env.
 services:
   openclaw-gateway:
+    env_file:
+      - path: .env.viewport-fresh
+        required: true
     build:
       context: .
       dockerfile: Dockerfile
@@ -21,6 +24,9 @@ services:
       - "${DOCKER_GID:-999}"
 
   openclaw-cli:
+    env_file:
+      - path: .env.viewport-fresh
+        required: true
     build:
       context: .
       dockerfile: Dockerfile
