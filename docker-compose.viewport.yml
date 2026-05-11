@@ -1,0 +1,20 @@
+services:
+  openclaw-gateway:
+    env_file:
+      - path: .env
+        required: true
+    volumes:
+      - ${OPENCLAW_CONFIG_DIR}:/home/node/.openclaw
+      - ${OPENCLAW_WORKSPACE_DIR}:/home/node/.openclaw/workspace
+    ports:
+      - "${OPENCLAW_GATEWAY_PORT:-127.0.0.1:47295}:18789"
+      - "${OPENCLAW_BRIDGE_PORT:-127.0.0.1:47296}:18790"
+    restart: unless-stopped
+
+  openclaw-cli:
+    env_file:
+      - path: .env
+        required: true
+    volumes:
+      - ${OPENCLAW_CONFIG_DIR}:/home/node/.openclaw
+      - ${OPENCLAW_WORKSPACE_DIR}:/home/node/.openclaw/workspace
