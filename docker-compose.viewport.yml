@@ -1,20 +1,49 @@
 services:
   openclaw-gateway:
     env_file:
-      - path: .env
-        required: true
+    - path: .env
+      required: true
+    environment:
+      OPENCLAW_GATEWAY_PORT: '18789'
+      OPENCLAW_BRIDGE_PORT: '18790'
+      OPENCLAW_CONFIG_DIR: /home/node/.openclaw
+      OPENCLAW_WORKSPACE_DIR: /home/node/.openclaw/workspace
+      VIEWPORT_CONTROL_PLANE_DIR: /opt/viewport/control-plane
+      VIEWPORT_HOST_ROOT: /srv/viewport
+      DOCKER_HOST: unix:///var/run/docker.sock
     volumes:
-      - ${OPENCLAW_CONFIG_DIR}:/home/node/.openclaw
-      - ${OPENCLAW_WORKSPACE_DIR}:/home/node/.openclaw/workspace
+    - ${OPENCLAW_CONFIG_DIR}:/home/node/.openclaw
+    - ${OPENCLAW_WORKSPACE_DIR}:/home/node/.openclaw/workspace
+    - /srv/viewport:/srv/viewport:rw
+    - /srv/viewport/runtime/hermes/workspace/viewport-ops:/opt/viewport/control-plane:rw
+    - /var/run/docker.sock:/var/run/docker.sock
+    - /var/run/docker-viewport.sock:/var/run/docker-viewport.sock
+    - /root/.ssh:/home/node/.ssh-host-root:ro
     ports:
-      - "${OPENCLAW_GATEWAY_PORT:-127.0.0.1:47295}:18789"
-      - "${OPENCLAW_BRIDGE_PORT:-127.0.0.1:47296}:18790"
+    - ${OPENCLAW_GATEWAY_PORT:-127.0.0.1:47295}:18789
+    - ${OPENCLAW_BRIDGE_PORT:-127.0.0.1:47296}:18790
     restart: unless-stopped
-
+    group_add:
+    - '988'
   openclaw-cli:
     env_file:
-      - path: .env
-        required: true
+    - path: .env
+      required: true
+    environment:
+      OPENCLAW_GATEWAY_PORT: '18789'
+      OPENCLAW_BRIDGE_PORT: '18790'
+      OPENCLAW_CONFIG_DIR: /home/node/.openclaw
+      OPENCLAW_WORKSPACE_DIR: /home/node/.openclaw/workspace
+      VIEWPORT_CONTROL_PLANE_DIR: /opt/viewport/control-plane
+      VIEWPORT_HOST_ROOT: /srv/viewport
+      DOCKER_HOST: unix:///var/run/docker.sock
     volumes:
-      - ${OPENCLAW_CONFIG_DIR}:/home/node/.openclaw
-      - ${OPENCLAW_WORKSPACE_DIR}:/home/node/.openclaw/workspace
+    - ${OPENCLAW_CONFIG_DIR}:/home/node/.openclaw
+    - ${OPENCLAW_WORKSPACE_DIR}:/home/node/.openclaw/workspace
+    - /srv/viewport:/srv/viewport:rw
+    - /srv/viewport/runtime/hermes/workspace/viewport-ops:/opt/viewport/control-plane:rw
+    - /var/run/docker.sock:/var/run/docker.sock
+    - /var/run/docker-viewport.sock:/var/run/docker-viewport.sock
+    - /root/.ssh:/home/node/.ssh-host-root:ro
+    group_add:
+    - '988'
