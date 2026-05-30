@@ -11,6 +11,12 @@ services:
       VIEWPORT_CONTROL_PLANE_DIR: /opt/viewport/control-plane
       VIEWPORT_HOST_ROOT: /srv/viewport
       DOCKER_HOST: unix:///var/run/docker.sock
+      # gh CLI only auto-detects GH_TOKEN/GITHUB_TOKEN. Keep the canonical
+      # runtime secret name as GITHUB_TOKEN_VIEWPORT_CORP and expose safe
+      # aliases inside the OpenClaw gateway/CLI containers without committing
+      # or printing the token value.
+      GH_TOKEN: ${GITHUB_TOKEN_VIEWPORT_CORP:-}
+      GITHUB_TOKEN: ${GITHUB_TOKEN_VIEWPORT_CORP:-}
     volumes:
     - ${OPENCLAW_CONFIG_DIR}:/home/node/.openclaw
     - ${OPENCLAW_WORKSPACE_DIR}:/home/node/.openclaw/workspace
@@ -37,6 +43,12 @@ services:
       VIEWPORT_CONTROL_PLANE_DIR: /opt/viewport/control-plane
       VIEWPORT_HOST_ROOT: /srv/viewport
       DOCKER_HOST: unix:///var/run/docker.sock
+      # gh CLI only auto-detects GH_TOKEN/GITHUB_TOKEN. Keep the canonical
+      # runtime secret name as GITHUB_TOKEN_VIEWPORT_CORP and expose safe
+      # aliases inside the OpenClaw gateway/CLI containers without committing
+      # or printing the token value.
+      GH_TOKEN: ${GITHUB_TOKEN_VIEWPORT_CORP:-}
+      GITHUB_TOKEN: ${GITHUB_TOKEN_VIEWPORT_CORP:-}
     volumes:
     - ${OPENCLAW_CONFIG_DIR}:/home/node/.openclaw
     - ${OPENCLAW_WORKSPACE_DIR}:/home/node/.openclaw/workspace
