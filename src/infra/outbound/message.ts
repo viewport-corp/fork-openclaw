@@ -91,6 +91,7 @@ type MessageSendParams = {
   mirror?: OutboundMirror;
   abortSignal?: AbortSignal;
   silent?: boolean;
+  parseMode?: "HTML";
 };
 
 export type MessageSendResult = {
@@ -253,7 +254,10 @@ async function assertRequiredMessageSendDurability(params: {
     support.reason === "capability_mismatch" && support.capability
       ? `missing ${support.capability}`
       : support.reason;
-  throw new Error(`Required durable message send is unsupported for ${params.channel}: ${suffix}`);
+  throw new Error(
+    `Required durable message send is unsupported for ${params.channel}: ${suffix}. ` +
+      'Use queuePolicy:"best_effort" for best-effort delivery, omit bestEffort:false in message-tool calls, or use a channel with required durable delivery support.',
+  );
 }
 
 function resolveGatewayOptions(opts?: MessageGatewayOptions) {
@@ -397,6 +401,7 @@ export async function sendMessage(params: MessageSendParams): Promise<MessageSen
       signal: params.abortSignal,
       silent: params.silent,
       mediaAccess: params.mediaAccess,
+      formatting: params.parseMode ? { parseMode: params.parseMode } : undefined,
       mirror: params.mirror
         ? {
             ...params.mirror,
@@ -435,6 +440,10 @@ export async function sendMessage(params: MessageSendParams): Promise<MessageSen
       agentId: params.agentId,
       channel,
       replyToId: params.replyToId,
+      threadId: params.threadId != null ? String(params.threadId) : undefined,
+      forceDocument: params.forceDocument,
+      silent: params.silent,
+      parseMode: params.parseMode,
       sessionKey: params.mirror?.sessionKey,
       idempotencyKey: await resolveGatewayIdempotencyKey(params.idempotencyKey),
     },

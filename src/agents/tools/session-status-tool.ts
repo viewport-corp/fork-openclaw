@@ -1,3 +1,4 @@
+import { uniqueStrings } from "@openclaw/normalization-core/string-normalization";
 import { Type } from "typebox";
 import type {
   ElevatedLevel,
@@ -14,7 +15,9 @@ import {
   updateSessionStore,
 } from "../../config/sessions.js";
 import type { OpenClawConfig } from "../../config/types.openclaw.js";
+import { triggerSessionPatchHook } from "../../gateway/session-patch-hooks.js";
 import { resolveSessionModelIdentityRef } from "../../gateway/session-utils.js";
+import { loadManifestMetadataSnapshot } from "../../plugins/manifest-contract-eligibility.js";
 import {
   buildAgentMainSessionKey,
   DEFAULT_AGENT_ID,
@@ -28,12 +31,11 @@ import { buildTaskStatusSnapshotForRelatedSessionKeyForOwner } from "../../tasks
 import { formatTaskStatusDetail, formatTaskStatusTitle } from "../../tasks/task-status.js";
 import { loadModelCatalog } from "../model-catalog.js";
 import {
-  buildConfiguredModelCatalog,
   buildModelAliasIndex,
   modelKey,
   resolveDefaultModelForAgent,
   resolveModelRefFromString,
-  resolveThinkingDefault,
+  resolveThinkingDefaultWithRuntimeCatalog,
 } from "../model-selection.js";
 import { createModelVisibilityPolicy } from "../model-visibility-policy.js";
 import {
@@ -182,7 +184,7 @@ function listImplicitDefaultDirectFallbackKeys(params: {
     }),
     params.mainKey,
   ];
-  return [...new Set(candidates)];
+  return uniqueStrings(candidates);
 }
 
 type ActiveStatusModelIdentity = { provider?: string; model: string };
@@ -288,18 +290,33 @@ async function resolveModelOverride(params: {
     defaultProvider: currentProvider,
   });
   const catalog = await loadModelCatalog({ config: params.cfg });
+  const manifestMetadataSnapshot = loadManifestMetadataSnapshot({
+    config: params.cfg,
+    workspaceDir: params.sessionEntry?.spawnedWorkspaceDir,
+    env: process.env,
+  });
+  const modelManifestContext = {
+    manifestPlugins: manifestMetadataSnapshot.plugins,
+  };
   const policy = createModelVisibilityPolicy({
     cfg: params.cfg,
     catalog,
     defaultProvider: currentProvider,
     defaultModel: currentModel,
     agentId: params.agentId,
+    allowManifestNormalization: true,
+    allowPluginNormalization: true,
+    ...modelManifestContext,
   });
 
   const resolved = resolveModelRefFromString({
+    cfg: params.cfg,
     raw,
     defaultProvider: currentProvider,
     aliasIndex,
+    allowManifestNormalization: true,
+    allowPluginNormalization: true,
+    ...modelManifestContext,
   });
   if (!resolved) {
     throw new Error(`Unrecognized model "${raw}".`);
@@ -397,12 +414,20 @@ export function createSessionStatusTool(opts?: {
       });
 
       const requestedKeyParam = readStringParam(params, "sessionKey");
+      const isImplicitRunSessionStatus =
+        requestedKeyParam === undefined && Boolean(opts?.runSessionKey?.trim());
       let requestedKeyRaw = requestedKeyParam ?? opts?.agentSessionKey;
+
+      // No-arg status should prefer the live run session when available (#82669).
+      if (isImplicitRunSessionStatus) {
+        requestedKeyRaw = opts?.runSessionKey;
+      }
 
       // Track whether this is a semantic-current request (literal "current" or a
       // current-client alias) BEFORE any rewrite, so visibility treats it as self.
       const isSemanticCurrentRequest =
         requestedKeyRaw === "current" ||
+        isImplicitRunSessionStatus ||
         Boolean(
           resolveCurrentSessionClientAlias({
             key: requestedKeyRaw ?? "",
@@ -558,7 +583,7 @@ export function createSessionStatusTool(opts?: {
         const fallback = resolveImplicitCurrentSessionFallback({
           allowFallback: isSemanticCurrentRequest || requestedKeyParam === undefined,
           fallbackKey:
-            isSemanticCurrentRequest && opts?.runSessionKey
+            (isSemanticCurrentRequest || isImplicitRunSessionStatus) && opts?.runSessionKey
               ? opts.runSessionKey
               : storeScopedRequesterKey,
         });
@@ -631,6 +656,15 @@ export function createSessionStatusTool(opts?: {
             nextStore[resolved.key] = persistedEntry;
           });
           resolved.entry = persistedEntry;
+          triggerSessionPatchHook({
+            cfg,
+            sessionEntry: persistedEntry,
+            sessionKey: resolved.key,
+            patch: {
+              key: resolved.key,
+              model: selection.kind === "reset" ? null : `${selection.provider}/${selection.model}`,
+            },
+          });
           changedModel = true;
         }
       }
@@ -713,32 +747,13 @@ export function createSessionStatusTool(opts?: {
         resolvedVerboseLevel: (statusSessionEntry.verboseLevel ?? "off") as VerboseLevel,
         resolvedReasoningLevel: (statusSessionEntry.reasoningLevel ?? "off") as ReasoningLevel,
         resolvedElevatedLevel: statusSessionEntry.elevatedLevel as ElevatedLevel | undefined,
-        resolveDefaultThinkingLevel: async () => {
-          const configuredCatalog = buildConfiguredModelCatalog({ cfg });
-          const configuredSelectedEntry = configuredCatalog.find(
-            (entry) => entry.provider === providerForCard && entry.id === defaultModelForCard,
-          );
-          const shouldHydrateRuntimeCatalog =
-            configuredCatalog.length === 0 ||
-            !configuredSelectedEntry ||
-            configuredSelectedEntry.reasoning === undefined;
-          const runtimeCatalog = shouldHydrateRuntimeCatalog
-            ? await loadModelCatalog({ config: cfg })
-            : undefined;
-          const runtimeSelectedEntry = runtimeCatalog?.find(
-            (entry) => entry.provider === providerForCard && entry.id === defaultModelForCard,
-          );
-          const catalog =
-            runtimeSelectedEntry || configuredCatalog.length === 0
-              ? (runtimeCatalog ?? configuredCatalog)
-              : configuredCatalog;
-          return resolveThinkingDefault({
+        resolveDefaultThinkingLevel: () =>
+          resolveThinkingDefaultWithRuntimeCatalog({
             cfg,
             provider: providerForCard,
             model: defaultModelForCard,
-            catalog,
-          });
-        },
+            loadModelCatalog: () => loadModelCatalog({ config: cfg }),
+          }),
         isGroup,
         defaultGroupActivation: () => "mention",
         taskLineOverride: taskLine,

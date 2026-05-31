@@ -1,10 +1,13 @@
+import { MAX_DATE_TIMESTAMP_MS } from "@openclaw/normalization-core/number-coercion";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
   consumeExecApprovalFollowupRuntimeHandoff,
+  registerExecApprovalFollowupRuntimeHandoff,
   resetExecApprovalFollowupRuntimeHandoffsForTests,
 } from "./bash-tools.exec-approval-followup-state.js";
 import {
   buildExecApprovalPendingToolResult,
+  createExecApprovalPendingState,
   enforceStrictInlineEvalApprovalBoundary,
   MAX_EXEC_APPROVAL_FOLLOWUP_FAILURE_LOG_KEYS as maxExecApprovalFollowupFailureLogKeys,
   resolveExecApprovalUnavailableState,
@@ -39,6 +42,60 @@ vi.mock("../infra/exec-approvals.js", async (importOriginal) => {
   };
 });
 
+describe("createExecApprovalPendingState", () => {
+  it("sets a valid pending approval expiry from the current clock", () => {
+    const nowSpy = vi.spyOn(Date, "now");
+    try {
+      nowSpy.mockReturnValue(1_800_000_000_000);
+
+      expect(
+        createExecApprovalPendingState({
+          warnings: ["careful"],
+          timeoutMs: 60_000,
+        }),
+      ).toMatchObject({
+        warningText: "careful\n\n",
+        expiresAtMs: 1_800_000_060_000,
+        preResolvedDecision: undefined,
+      });
+    } finally {
+      nowSpy.mockRestore();
+    }
+  });
+
+  it("expires pending approvals immediately while the process clock is invalid", () => {
+    const nowSpy = vi.spyOn(Date, "now");
+    try {
+      nowSpy.mockReturnValue(Number.NaN);
+
+      expect(
+        createExecApprovalPendingState({
+          warnings: [],
+          timeoutMs: 60_000,
+        }).expiresAtMs,
+      ).toBe(0);
+    } finally {
+      nowSpy.mockRestore();
+    }
+  });
+
+  it("expires pending approvals immediately when expiry would exceed Date bounds", () => {
+    const nowSpy = vi.spyOn(Date, "now");
+    try {
+      nowSpy.mockReturnValue(MAX_DATE_TIMESTAMP_MS);
+
+      expect(
+        createExecApprovalPendingState({
+          warnings: [],
+          timeoutMs: 60_000,
+        }).expiresAtMs,
+      ).toBe(0);
+    } finally {
+      nowSpy.mockRestore();
+    }
+  });
+});
+
 describe("sendExecApprovalFollowupResult", () => {
   const sendExecApprovalFollowup = vi.fn();
   const logWarn = vi.fn();
@@ -65,6 +122,24 @@ describe("sendExecApprovalFollowupResult", () => {
     });
     resetExecApprovalFollowupRuntimeHandoffsForTests();
   });
+
+  function firstExecApprovalFollowupCall():
+    | {
+        internalRuntimeHandoffId?: string;
+        idempotencyKey?: string;
+        execApprovalFollowupToken?: string;
+        bashElevated?: unknown;
+      }
+    | undefined {
+    return sendExecApprovalFollowup.mock.calls[0]?.[0] as
+      | {
+          internalRuntimeHandoffId?: string;
+          idempotencyKey?: string;
+          execApprovalFollowupToken?: string;
+          bashElevated?: unknown;
+        }
+      | undefined;
+  }
 
   it("logs repeated followup dispatch failures once per approval id and error message", async () => {
     sendExecApprovalFollowup.mockRejectedValue(new Error("Channel is required"));
@@ -131,41 +206,79 @@ describe("sendExecApprovalFollowupResult", () => {
       { sendExecApprovalFollowup, logWarn },
     );
 
-    const call = sendExecApprovalFollowup.mock.calls[0]?.[0] as
-      | {
-          internalRuntimeHandoffId?: string;
-          idempotencyKey?: string;
-          execApprovalFollowupToken?: string;
-          bashElevated?: unknown;
-        }
-      | undefined;
-    expect(call?.internalRuntimeHandoffId).toEqual(expect.any(String));
-    expect(call?.idempotencyKey).toMatch(/^exec-approval-followup:approval-elevated-75832:nonce:/);
-    expect(call?.idempotencyKey).not.toContain(call?.internalRuntimeHandoffId ?? "");
+    const call = firstExecApprovalFollowupCall();
+    if (!call) {
+      throw new Error("Expected elevated exec approval followup call");
+    }
+    expect(call.internalRuntimeHandoffId).toMatch(
+      /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/,
+    );
+    expect(call.idempotencyKey).toMatch(/^exec-approval-followup:approval-elevated-75832:nonce:/);
+    expect(call.idempotencyKey).not.toContain(call.internalRuntimeHandoffId ?? "");
     expect(call).not.toHaveProperty("bashElevated");
     expect(call).not.toHaveProperty("execApprovalFollowupToken");
     expect(
       consumeExecApprovalFollowupRuntimeHandoff({
-        handoffId: call?.internalRuntimeHandoffId ?? "",
+        handoffId: call.internalRuntimeHandoffId ?? "",
         approvalId: "approval-elevated-75832",
-        idempotencyKey: call?.idempotencyKey ?? "",
+        idempotencyKey: call.idempotencyKey ?? "",
         sessionKey: "agent:main:telegram:direct:wrong",
       }),
     ).toBeUndefined();
     expect(
       consumeExecApprovalFollowupRuntimeHandoff({
-        handoffId: call?.internalRuntimeHandoffId ?? "",
+        handoffId: call.internalRuntimeHandoffId ?? "",
         approvalId: "approval-elevated-75832",
-        idempotencyKey: call?.idempotencyKey ?? "",
+        idempotencyKey: call.idempotencyKey ?? "",
         sessionKey: "agent:main:telegram:direct:123",
       }),
     ).toEqual({
       kind: "exec-approval-followup",
       approvalId: "approval-elevated-75832",
       sessionKey: "agent:main:telegram:direct:123",
-      idempotencyKey: call?.idempotencyKey,
+      idempotencyKey: call.idempotencyKey,
       bashElevated,
     });
+  });
+
+  it("does not register elevated runtime handoffs when the process clock is invalid", () => {
+    const registration = registerExecApprovalFollowupRuntimeHandoff({
+      approvalId: "approval-elevated-invalid-clock",
+      sessionKey: "agent:main:telegram:direct:123",
+      bashElevated: {
+        enabled: true,
+        allowed: true,
+        defaultLevel: "on",
+      },
+      nowMs: Number.NaN,
+    });
+
+    expect(registration).toBeUndefined();
+  });
+
+  it("does not register elevated runtime handoffs for denied followups", async () => {
+    sendExecApprovalFollowup.mockResolvedValue(false);
+    const bashElevated = {
+      enabled: true,
+      allowed: true,
+      defaultLevel: "on" as const,
+    };
+
+    await sendExecApprovalFollowupResult(
+      {
+        approvalId: "approval-denied-elevated-75832",
+        sessionKey: "agent:main:telegram:direct:123",
+        turnSourceChannel: "telegram",
+        bashElevated,
+      },
+      "Exec denied (gateway id=approval-denied-elevated-75832, user-denied): uname -a",
+      { sendExecApprovalFollowup, logWarn },
+    );
+
+    const call = firstExecApprovalFollowupCall();
+    expect(call).not.toHaveProperty("internalRuntimeHandoffId");
+    expect(call).not.toHaveProperty("idempotencyKey");
+    expect(call).not.toHaveProperty("bashElevated");
   });
 
   it("keeps non-elevated agent followups on the deterministic idempotency path", async () => {
@@ -181,13 +294,7 @@ describe("sendExecApprovalFollowupResult", () => {
       { sendExecApprovalFollowup, logWarn },
     );
 
-    const call = sendExecApprovalFollowup.mock.calls[0]?.[0] as
-      | {
-          internalRuntimeHandoffId?: string;
-          idempotencyKey?: string;
-          bashElevated?: unknown;
-        }
-      | undefined;
+    const call = firstExecApprovalFollowupCall();
     expect(call).not.toHaveProperty("internalRuntimeHandoffId");
     expect(call).not.toHaveProperty("idempotencyKey");
     expect(call).not.toHaveProperty("bashElevated");
@@ -290,6 +397,23 @@ describe("enforceStrictInlineEvalApprovalBoundary", () => {
         requiresInlineEvalApproval: true,
       }),
     ).toEqual({
+      approvedByAsk: false,
+      deniedReason: "approval-timeout",
+    });
+  });
+
+  it("denies timeout-based fallback when auto-review defers to human approval", () => {
+    const params = {
+      baseDecision: { timedOut: true },
+      approvedByAsk: true,
+      deniedReason: null,
+      requiresInlineEvalApproval: false,
+      requiresAutoReviewHumanApproval: true,
+    } satisfies Parameters<typeof enforceStrictInlineEvalApprovalBoundary>[0] & {
+      requiresAutoReviewHumanApproval: true;
+    };
+
+    expect(enforceStrictInlineEvalApprovalBoundary(params)).toEqual({
       approvedByAsk: false,
       deniedReason: "approval-timeout",
     });

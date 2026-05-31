@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { normalizeOptionalString } from "@openclaw/normalization-core/string-coerce";
 import type { PluginApprovalRequestPayload } from "../infra/plugin-approvals.js";
 import { DEFAULT_PLUGIN_APPROVAL_TIMEOUT_MS } from "../infra/plugin-approvals.js";
 import { getActiveRuntimePluginRegistry } from "../plugins/active-runtime-registry.js";
@@ -8,8 +9,8 @@ import type {
   OpenClawPluginNodeInvokePolicyResult,
   OpenClawPluginNodeInvokeTransportResult,
 } from "../plugins/types.js";
-import { normalizeOptionalString } from "../shared/string-coerce.js";
 import type { NodeSession } from "./node-registry.js";
+import { resolveApprovalRequestRecipientConnIds } from "./server-methods/approval-shared.js";
 import type { GatewayClient, GatewayRequestContext } from "./server-methods/types.js";
 
 function parseScopes(client: GatewayClient | null): string[] {
@@ -68,6 +69,10 @@ function createApprovalRuntime(params: {
         sessionKey: normalizeOptionalString(input.sessionKey) ?? null,
       };
       const record = manager.create(request, timeoutMs, `plugin:${randomUUID()}`);
+      record.requestedByConnId = params.client?.connId ?? null;
+      record.requestedByDeviceId = params.client?.connect?.device?.id ?? null;
+      record.requestedByClientId = params.client?.connect?.client?.id ?? null;
+      record.requestedByDeviceTokenAuth = params.client?.isDeviceTokenAuth === true;
       const decisionPromise = manager.register(record, timeoutMs);
       const requestEvent = {
         id: record.id,
@@ -75,11 +80,29 @@ function createApprovalRuntime(params: {
         createdAtMs: record.createdAtMs,
         expiresAtMs: record.expiresAtMs,
       };
-      params.context.broadcast("plugin.approval.requested", requestEvent, {
-        dropIfSlow: true,
+      const approvalClientConnIds = resolveApprovalRequestRecipientConnIds({
+        context: params.context,
+        record,
+        excludeConnId: params.client?.connId,
       });
+      if (approvalClientConnIds) {
+        params.context.broadcastToConnIds(
+          "plugin.approval.requested",
+          requestEvent,
+          approvalClientConnIds,
+          {
+            dropIfSlow: true,
+          },
+        );
+      } else {
+        params.context.broadcast("plugin.approval.requested", requestEvent, {
+          dropIfSlow: true,
+        });
+      }
       const hasApprovalClients =
-        params.context.hasExecApprovalClients?.(params.client?.connId) ?? false;
+        approvalClientConnIds !== null
+          ? approvalClientConnIds.size > 0
+          : (params.context.hasExecApprovalClients?.(params.client?.connId) ?? false);
       if (!hasApprovalClients) {
         manager.expire(record.id, "no-approval-route");
         return { id: record.id, decision: null };

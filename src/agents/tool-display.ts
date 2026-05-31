@@ -1,5 +1,5 @@
+import { normalizeLowercaseStringOrEmpty } from "@openclaw/normalization-core/string-coerce";
 import { redactToolDetail } from "../logging/redact.js";
-import { normalizeLowercaseStringOrEmpty } from "../shared/string-coerce.js";
 import { shortenHomeInString } from "../utils.js";
 import {
   defaultTitle,
@@ -87,6 +87,9 @@ export function formatToolDetail(display: ToolDisplay): string | undefined {
 
 export function formatToolSummary(display: ToolDisplay): string {
   const detail = formatToolDetail(display);
+  if (detail && (display.name === "bash" || display.name === "exec")) {
+    return `${display.emoji} ${detail}`;
+  }
   return detail
     ? `${display.emoji} ${display.label}: ${detail}`
     : `${display.emoji} ${display.label}`;

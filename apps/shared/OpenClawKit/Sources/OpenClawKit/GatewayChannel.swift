@@ -14,6 +14,22 @@ public protocol WebSocketTasking: AnyObject {
 
 extension URLSessionWebSocketTask: WebSocketTasking {}
 
+private final class WebSocketPingContinuationGate: @unchecked Sendable {
+    private let lock = NSLock()
+    private var didResume = false
+
+    func resumeOnce(_ resume: () -> Void) {
+        self.lock.lock()
+        if self.didResume {
+            self.lock.unlock()
+            return
+        }
+        self.didResume = true
+        self.lock.unlock()
+        resume()
+    }
+}
+
 public struct WebSocketTaskBox: @unchecked Sendable {
     public let task: any WebSocketTasking
     public init(task: any WebSocketTasking) {
@@ -48,8 +64,13 @@ public struct WebSocketTaskBox: @unchecked Sendable {
 
     public func sendPing() async throws {
         try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
+            let gate = WebSocketPingContinuationGate()
             self.task.sendPing { error in
-                ThrowingContinuationSupport.resumeVoid(continuation, error: error)
+                // URLSession can race ping callbacks with cancellation; only the first
+                // pong result owns this checked continuation or Swift traps the app.
+                gate.resumeOnce {
+                    ThrowingContinuationSupport.resumeVoid(continuation, error: error)
+                }
             }
         }
     }
@@ -79,6 +100,7 @@ public struct WebSocketSessionBox: @unchecked Sendable {
 public struct GatewayConnectOptions: Sendable {
     public var role: String
     public var scopes: [String]
+    public var scopesAreExplicit: Bool
     public var caps: [String]
     public var commands: [String]
     public var permissions: [String: Bool]
@@ -93,6 +115,7 @@ public struct GatewayConnectOptions: Sendable {
     public init(
         role: String,
         scopes: [String],
+        scopesAreExplicit: Bool = false,
         caps: [String],
         commands: [String],
         permissions: [String: Bool],
@@ -103,6 +126,7 @@ public struct GatewayConnectOptions: Sendable {
     {
         self.role = role
         self.scopes = scopes
+        self.scopesAreExplicit = scopesAreExplicit
         self.caps = caps
         self.commands = commands
         self.permissions = permissions
@@ -130,7 +154,11 @@ private func gatewayErrorDetails(_ error: ErrorShape?) -> [String: ProtoAnyCodab
         details.merge(nested) { _, nestedValue in nestedValue }
     }
     if let error {
-        details["code"] = ProtoAnyCodable(error.code)
+        if details["code"] == nil {
+            details["code"] = ProtoAnyCodable(error.code)
+        } else {
+            details["errorCode"] = ProtoAnyCodable(error.code)
+        }
         details["message"] = ProtoAnyCodable(error.message)
         if let retryable = error.retryable {
             details["retryable"] = ProtoAnyCodable(retryable)
@@ -167,6 +195,7 @@ private struct SelectedConnectAuth {
     let authPassword: String?
     let signatureToken: String?
     let storedToken: String?
+    let storedScopes: [String]?
     let authSource: GatewayAuthSource
 }
 
@@ -206,7 +235,7 @@ public actor GatewayChannelActor {
     private let encoder = JSONEncoder()
     // Remote gateways (tailscale/wan) can take longer to deliver connect.challenge.
     // Connect now requires this nonce before we send device-auth.
-    private let connectTimeoutSeconds: Double = 12
+    private let connectTimeoutSeconds: Double = 30
     private let connectChallengeTimeoutSeconds: Double = 6.0
     // Some networks will silently drop idle TCP/TLS flows around ~30s. The gateway tick is server->client,
     // but NATs/proxies often require outbound traffic to keep the connection alive.
@@ -406,7 +435,19 @@ public actor GatewayChannelActor {
         let clientId = options.clientId
         let clientMode = options.clientMode
         let role = options.role
-        let scopes = options.scopes
+        let requestedScopes = options.scopes
+        let scopesAreExplicit = options.scopesAreExplicit
+        let includeDeviceIdentity = options.includeDeviceIdentity
+        let identity = includeDeviceIdentity ? DeviceIdentityStore.loadOrCreate() : nil
+        let selectedAuth = self.selectConnectAuth(
+            role: role,
+            includeDeviceIdentity: includeDeviceIdentity,
+            deviceId: identity?.deviceId)
+        let scopes = self.resolveConnectScopes(
+            role: role,
+            requestedScopes: requestedScopes,
+            scopesAreExplicit: scopesAreExplicit,
+            selectedAuth: selectedAuth)
 
         let reqId = UUID().uuidString
         var client: [String: ProtoAnyCodable] = [
@@ -423,7 +464,7 @@ public actor GatewayChannelActor {
             client["modelIdentifier"] = ProtoAnyCodable(model)
         }
         var params: [String: ProtoAnyCodable] = [
-            "minProtocol": ProtoAnyCodable(GATEWAY_PROTOCOL_VERSION),
+            "minProtocol": ProtoAnyCodable(GATEWAY_MIN_PROTOCOL_VERSION),
             "maxProtocol": ProtoAnyCodable(GATEWAY_PROTOCOL_VERSION),
             "client": ProtoAnyCodable(client),
             "caps": ProtoAnyCodable(options.caps),
@@ -438,12 +479,6 @@ public actor GatewayChannelActor {
         if !options.permissions.isEmpty {
             params["permissions"] = ProtoAnyCodable(options.permissions)
         }
-        let includeDeviceIdentity = options.includeDeviceIdentity
-        let identity = includeDeviceIdentity ? DeviceIdentityStore.loadOrCreate() : nil
-        let selectedAuth = self.selectConnectAuth(
-            role: role,
-            includeDeviceIdentity: includeDeviceIdentity,
-            deviceId: identity?.deviceId)
         if selectedAuth.authDeviceToken != nil, self.pendingDeviceTokenRetry {
             self.pendingDeviceTokenRetry = false
         }
@@ -526,10 +561,11 @@ public actor GatewayChannelActor {
         let explicitBootstrapToken =
             self.bootstrapToken?.trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmpty
         let explicitPassword = self.password?.trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmpty
-        let storedToken =
+        let storedEntry =
             (includeDeviceIdentity && deviceId != nil)
-            ? DeviceAuthStore.loadToken(deviceId: deviceId!, role: role)?.token
+            ? DeviceAuthStore.loadToken(deviceId: deviceId!, role: role)
             : nil
+        let storedToken = storedEntry?.token
         let shouldUseDeviceRetryToken =
             includeDeviceIdentity && self.pendingDeviceTokenRetry &&
             storedToken != nil && explicitToken != nil && self.isTrustedDeviceRetryEndpoint()
@@ -561,6 +597,7 @@ public actor GatewayChannelActor {
             authPassword: explicitPassword,
             signatureToken: authToken ?? authBootstrapToken,
             storedToken: storedToken,
+            storedScopes: storedEntry?.scopes,
             authSource: authSource)
     }
 
@@ -592,6 +629,27 @@ public actor GatewayChannelActor {
         default:
             return nil
         }
+    }
+
+    private func resolveConnectScopes(
+        role: String,
+        requestedScopes: [String],
+        scopesAreExplicit: Bool,
+        selectedAuth: SelectedConnectAuth) -> [String]
+    {
+        if selectedAuth.authSource == .bootstrapToken,
+           let filteredScopes = self.filteredBootstrapHandoffScopes(role: role, scopes: requestedScopes)
+        {
+            return filteredScopes
+        }
+        if selectedAuth.authSource == .deviceToken,
+           !scopesAreExplicit,
+           let storedScopes = selectedAuth.storedScopes,
+           !storedScopes.isEmpty
+        {
+            return storedScopes
+        }
+        return requestedScopes
     }
 
     private func persistBootstrapHandoffToken(

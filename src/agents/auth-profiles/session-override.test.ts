@@ -67,6 +67,25 @@ vi.mock("./store.js", () => ({
 }));
 
 vi.mock("./order.js", () => ({
+  isStoredCredentialCompatibleWithAuthProvider: ({
+    cfg: _cfg,
+    provider,
+    credential,
+  }: {
+    cfg?: OpenClawConfig;
+    provider: string;
+    credential: { type: string; provider: string };
+  }) => {
+    const normalizeProvider = (value: string) => value.toLowerCase().replace(/[^a-z0-9]+/g, "");
+    const providerKey = normalizeProvider(provider);
+    const credentialProviderKey = normalizeProvider(credential.provider);
+    return (
+      credentialProviderKey === providerKey ||
+      (providerKey === "openaicodex" &&
+        credentialProviderKey === "openai" &&
+        credential.type === "api_key")
+    );
+  },
   isConfiguredAwsSdkAuthProfileForProvider: ({
     cfg,
     provider,
@@ -123,8 +142,8 @@ function createAuthStoreWithProfiles(params: {
   };
 }
 
-const TEST_PRIMARY_PROFILE_ID = "openai-codex:primary@example.test";
-const TEST_SECONDARY_PROFILE_ID = "openai-codex:secondary@example.test";
+const TEST_PRIMARY_PROFILE_ID = "openai:primary@example.test";
+const TEST_SECONDARY_PROFILE_ID = "openai:secondary@example.test";
 
 describe("resolveSessionAuthProfileOverride", () => {
   afterEach(() => {
@@ -315,17 +334,17 @@ describe("resolveSessionAuthProfileOverride", () => {
         profiles: {
           [TEST_PRIMARY_PROFILE_ID]: {
             type: "api_key",
-            provider: "openai-codex",
+            provider: "openai",
             key: "sk-josh",
           },
           [TEST_SECONDARY_PROFILE_ID]: {
             type: "api_key",
-            provider: "openai-codex",
+            provider: "openai",
             key: "sk-claude",
           },
         },
         order: {
-          "openai-codex": [TEST_PRIMARY_PROFILE_ID],
+          openai: [TEST_PRIMARY_PROFILE_ID],
         },
       });
 
@@ -339,7 +358,7 @@ describe("resolveSessionAuthProfileOverride", () => {
 
       const resolved = await resolveSessionAuthProfileOverride({
         cfg: {} as OpenClawConfig,
-        provider: "openai-codex",
+        provider: "openai",
         agentDir,
         sessionEntry,
         sessionStore,
@@ -363,7 +382,7 @@ describe("resolveSessionAuthProfileOverride", () => {
         profiles: {
           [TEST_PRIMARY_PROFILE_ID]: {
             type: "api_key",
-            provider: "openai-codex",
+            provider: "openai",
             key: "sk-codex",
           },
         },
@@ -405,12 +424,12 @@ describe("resolveSessionAuthProfileOverride", () => {
         profiles: {
           [TEST_PRIMARY_PROFILE_ID]: {
             type: "api_key",
-            provider: "openai-codex",
+            provider: "openai",
             key: "sk-codex",
           },
         },
         order: {
-          "openai-codex": [TEST_PRIMARY_PROFILE_ID],
+          openai: [TEST_PRIMARY_PROFILE_ID],
         },
       });
 
@@ -425,7 +444,7 @@ describe("resolveSessionAuthProfileOverride", () => {
       const resolved = await resolveSessionAuthProfileOverride({
         cfg: {} as OpenClawConfig,
         provider: "openai",
-        acceptedProviderIds: ["openai-codex"],
+        acceptedProviderIds: ["openai"],
         agentDir,
         sessionEntry,
         sessionStore,
@@ -439,6 +458,55 @@ describe("resolveSessionAuthProfileOverride", () => {
     });
   });
 
+  it("keeps user-pinned normal OpenAI API-key profiles for Codex sessions", async () => {
+    await withAuthState(async (state) => {
+      const agentDir = state.agentDir();
+      await fs.mkdir(agentDir, { recursive: true });
+      authStoreMocks.state.hasSource = true;
+      authStoreMocks.state.store = createAuthStoreWithProfiles({
+        profiles: {
+          "openai:api-key-backup": {
+            type: "api_key",
+            provider: "openai",
+            key: "sk-openai",
+          },
+          [TEST_PRIMARY_PROFILE_ID]: {
+            type: "api_key",
+            provider: "openai",
+            key: "sk-codex",
+          },
+        },
+        order: {
+          openai: [TEST_PRIMARY_PROFILE_ID],
+        },
+      });
+
+      const sessionEntry: SessionEntry = {
+        sessionId: "s1",
+        updatedAt: Date.now(),
+        authProfileOverride: "openai:api-key-backup",
+        authProfileOverrideSource: "user",
+      };
+      const sessionStore = { "agent:main:main": sessionEntry };
+
+      const resolved = await resolveSessionAuthProfileOverride({
+        cfg: {} as OpenClawConfig,
+        provider: "openai",
+        acceptedProviderIds: ["openai"],
+        agentDir,
+        sessionEntry,
+        sessionStore,
+        sessionKey: "agent:main:main",
+        storePath: undefined,
+        isNewSession: false,
+      });
+
+      expect(resolved).toBe("openai:api-key-backup");
+      expect(sessionEntry.authProfileOverride).toBe("openai:api-key-backup");
+      expect(sessionEntry.authProfileOverrideSource).toBe("user");
+    });
+  });
+
   it("re-resolves a stale user session override when the selected profile becomes unusable", async () => {
     await withAuthState(async (state) => {
       const agentDir = state.agentDir();
@@ -448,17 +516,17 @@ describe("resolveSessionAuthProfileOverride", () => {
         profiles: {
           [TEST_PRIMARY_PROFILE_ID]: {
             type: "api_key",
-            provider: "openai-codex",
+            provider: "openai",
             key: "sk-stale",
           },
           [TEST_SECONDARY_PROFILE_ID]: {
             type: "api_key",
-            provider: "openai-codex",
+            provider: "openai",
             key: "sk-healthy",
           },
         },
         order: {
-          "openai-codex": [TEST_SECONDARY_PROFILE_ID, TEST_PRIMARY_PROFILE_ID],
+          openai: [TEST_SECONDARY_PROFILE_ID, TEST_PRIMARY_PROFILE_ID],
         },
       });
       authStoreMocks.isProfileInCooldown.mockImplementation(
@@ -475,7 +543,7 @@ describe("resolveSessionAuthProfileOverride", () => {
 
       const resolved = await resolveSessionAuthProfileOverride({
         cfg: {} as OpenClawConfig,
-        provider: "openai-codex",
+        provider: "openai",
         agentDir,
         sessionEntry,
         sessionStore,

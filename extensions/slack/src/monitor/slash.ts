@@ -1,6 +1,6 @@
 import type { SlackActionMiddlewareArgs, SlackCommandMiddlewareArgs } from "@slack/bolt";
 import { resolveDefaultModelForAgent } from "openclaw/plugin-sdk/agent-runtime";
-import { createChannelMessageReplyPipeline } from "openclaw/plugin-sdk/channel-message";
+import { createChannelMessageReplyPipeline } from "openclaw/plugin-sdk/channel-outbound";
 import {
   formatCommandArgMenuTitle,
   resolveStoredModelOverride,
@@ -20,12 +20,18 @@ import type { ResolvedAgentRoute } from "openclaw/plugin-sdk/routing";
 import { danger, logVerbose } from "openclaw/plugin-sdk/runtime-env";
 import { loadSessionStore, resolveStorePath } from "openclaw/plugin-sdk/session-store-runtime";
 import {
-  chunkItems,
   normalizeLowercaseStringOrEmpty,
   normalizeOptionalString,
-} from "openclaw/plugin-sdk/text-runtime";
+  normalizeStringEntriesLower,
+} from "openclaw/plugin-sdk/string-coerce-runtime";
+import { chunkItems } from "openclaw/plugin-sdk/text-chunking";
 import type { ResolvedSlackAccount } from "../accounts.js";
 import { SLACK_MAX_BLOCKS } from "../blocks-input.js";
+import { formatSlackError } from "../errors.js";
+import {
+  compileSlackInteractiveReplies,
+  isSlackInteractiveRepliesEnabled,
+} from "../interactive-replies.js";
 import { truncateSlackText } from "../truncate.js";
 import { resolveSlackCommandIngress, resolveSlackEffectiveAllowFrom } from "./auth.js";
 import { resolveSlackChannelConfig, type SlackChannelConfigResolved } from "./channel-config.js";
@@ -714,6 +720,14 @@ export async function registerSlackMonitorSlashCommands(params: {
         agentId: route.agentId,
         channel: "slack",
         accountId: route.accountId,
+        transformReplyPayload: (payload) => {
+          if (payload.isReasoning === true) {
+            return null;
+          }
+          return isSlackInteractiveRepliesEnabled({ cfg, accountId: route.accountId })
+            ? compileSlackInteractiveReplies(payload)
+            : payload;
+        },
       });
 
       const deliverSlashPayloads = async (replies: ReplyPayload[]) => {
@@ -739,7 +753,7 @@ export async function registerSlackMonitorSlashCommands(params: {
           deliver: async (payload) => deliverSlashPayloads([payload]),
           onError: (err, info) => {
             runtime.error?.(
-              danger(`slack slash ${info.kind} reply failed: ${formatErrorMessage(err)}`),
+              danger(`slack slash ${info.kind} reply failed: ${formatSlackError(err)}`),
             );
           },
         },
@@ -783,7 +797,7 @@ export async function registerSlackMonitorSlashCommands(params: {
       provider: "slack",
     });
     const existingNativeNames = new Set(
-      nativeCommands.map((c) => normalizeLowercaseStringOrEmpty(c.name)).filter(Boolean),
+      normalizeStringEntriesLower(nativeCommands.map((command) => command.name)),
     );
     const { listProviderPluginCommandSpecs } = await loadSlackPluginCommandsRuntime();
     for (const pluginCommand of listProviderPluginCommandSpecs("slack")) {

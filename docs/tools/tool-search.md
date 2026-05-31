@@ -1,17 +1,22 @@
 ---
-summary: "Tool Search: compact large PI tool catalogs behind search, describe, and call"
+summary: "Tool Search: compact large OpenClaw tool catalogs behind search, describe, and call"
 title: "Tool Search"
 read_when:
-  - You want PI agents to use a large tool catalog without adding every tool schema to the prompt
-  - You want OpenClaw tools, MCP tools, and client tools exposed through one compact PI surface
-  - You are implementing or debugging tool discovery for PI runs
+  - You want OpenClaw agents to use a large tool catalog without adding every tool schema to the prompt
+  - You want OpenClaw tools, MCP tools, and client tools exposed through one compact runtime surface
+  - You are implementing or debugging tool discovery for OpenClaw runs
 ---
 
-Tool Search gives PI agents one compact way to discover and call large tool
-catalogs. It is useful when the run has many available tools but the model is
-likely to need only a few of them.
+Tool Search is an experimental OpenClaw agent runtime feature. It gives agents one
+compact way to discover and call large tool catalogs. It is useful when the run
+has many available tools but the model is likely to need only a few of them.
 
-When enabled for PI, the model receives one `tool_search_code` tool by default.
+This page documents OpenClaw Tool Search. It is not the Codex-native tool
+search or dynamic-tools surface. Codex-native code mode, tool search, deferred
+dynamic tools, and nested tool calls are stable Codex harness surfaces and do
+not depend on `tools.toolSearch`.
+
+When enabled for OpenClaw runs, the model receives one `tool_search_code` tool by default.
 That tool runs a short JavaScript body in an isolated Node subprocess with an
 `openclaw.tools` bridge:
 
@@ -29,13 +34,14 @@ client-provided tools. The model does not see every full schema up front.
 Instead, it searches compact descriptors, describes one selected tool when it
 needs the exact schema, and calls that tool through OpenClaw.
 
-Codex harness runs do not receive these OpenClaw Tool Search controls. OpenClaw
-passes product capabilities to Codex as dynamic tools, and Codex owns native
-code mode, native tool search, deferred dynamic tools, and nested tool calls.
+Codex harness runs do not receive these experimental OpenClaw Tool Search
+controls. OpenClaw passes product capabilities to Codex as dynamic tools, and
+Codex owns the stable native code mode, native tool search, deferred dynamic
+tools, and nested tool calls.
 
 ## How a turn runs
 
-At planning time the PI embedded runner builds the effective catalog for the
+At planning time the OpenClaw embedded runner builds the effective catalog for the
 run:
 
 1. Resolve the active tool policy for the agent, profile, sandbox, and session.
@@ -43,7 +49,7 @@ run:
 3. List eligible MCP tools through the session MCP runtime.
 4. Add eligible client tools supplied for the current run.
 5. Index compact descriptors for search.
-6. Expose either the PI code bridge or the structured fallback tools to the
+6. Expose either the OpenClaw code bridge or the structured fallback tools to the
    model.
 
 At execution time every real tool call returns to OpenClaw. The isolated Node
@@ -63,6 +69,9 @@ Both modes use the same catalog and execution path. The only difference is the
 shape the model sees. If the current runtime cannot launch the isolated Node
 code-mode child process, the default `code` mode falls back to `tools` before
 catalog compaction.
+
+Both modes are experimental. Prefer direct tool exposure for small OpenClaw tool
+catalogs, and prefer the Codex-native stable surfaces for Codex harness runs.
 
 There is no separate source-selection config. When Tool Search is enabled, the
 catalog includes eligible OpenClaw, MCP, and client tools after normal policy
@@ -142,14 +151,14 @@ Normal OpenClaw behavior still applies to final calls:
 
 - tool allow and deny policies
 - per-agent and per-sandbox tool restrictions
-- owner-only gating
+- channel/runtime tool policy
 - approval hooks
 - plugin `before_tool_call` hooks
 - session identity, logs, and telemetry
 
 ## Config
 
-Enable Tool Search for PI runs with the default code bridge:
+Enable Tool Search for OpenClaw runs with the default code bridge:
 
 ```bash
 openclaw config set tools.toolSearch true
@@ -165,7 +174,7 @@ Equivalent JSON:
 }
 ```
 
-Use the structured fallback tools instead for PI runs:
+Use the structured fallback tools instead for OpenClaw runs:
 
 ```json5
 {
@@ -221,7 +230,7 @@ Session logs should make it possible to answer:
 
 ## E2E validation
 
-The gateway E2E runner proves both paths with the PI harness:
+The gateway E2E runner proves both paths with the OpenClaw runtime:
 
 ```bash
 node --import tsx scripts/tool-search-gateway-e2e.ts

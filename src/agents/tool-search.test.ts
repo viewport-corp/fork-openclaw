@@ -1,12 +1,12 @@
 import { describe, expect, it, vi } from "vitest";
 import { setPluginToolMeta } from "../plugins/tools.js";
-import { wrapToolWithAbortSignal } from "./pi-tools.abort.js";
+import { wrapToolWithAbortSignal } from "./agent-tools.abort.js";
 import {
   isToolWrappedWithBeforeToolCallHook,
   wrapToolWithBeforeToolCallHook,
-} from "./pi-tools.before-tool-call.js";
+} from "./agent-tools.before-tool-call.js";
 import {
-  __testing,
+  testing,
   addClientToolsToToolSearchCatalog,
   applyToolSearchCatalog,
   clearToolSearchCatalog,
@@ -44,27 +44,39 @@ function pluginTool(name: string, description: string, pluginId = "fake-catalog"
   return tool;
 }
 
+function resultDetails(result: { details?: unknown }): Record<string, unknown> {
+  if (!result.details || typeof result.details !== "object") {
+    throw new Error("Expected result details");
+  }
+  return result.details as Record<string, unknown>;
+}
+
+function mockCall(mock: { mock: { calls: unknown[][] } }, index = 0): unknown[] {
+  const call = mock.mock.calls[index];
+  if (!call) {
+    throw new Error(`Expected mock call ${index}`);
+  }
+  return call;
+}
+
 describe("Tool Search", () => {
   it("enables object config when a mode is set", () => {
-    expect(
-      __testing.resolveToolSearchConfig({
-        tools: {
-          toolSearch: {
-            mode: "tools",
-          },
+    const resolved = testing.resolveToolSearchConfig({
+      tools: {
+        toolSearch: {
+          mode: "tools",
         },
-      } as never),
-    ).toMatchObject({
-      enabled: true,
-      mode: "tools",
-    });
+      },
+    } as never);
+    expect(resolved.enabled).toBe(true);
+    expect(resolved.mode).toBe("tools");
   });
 
   it("falls back to structured controls when code mode is unsupported", () => {
-    __testing.setToolSearchCodeModeSupportedForTest(false);
+    testing.setToolSearchCodeModeSupportedForTest(false);
     try {
       const config = { tools: { toolSearch: true } } as never;
-      const resolved = __testing.resolveToolSearchConfig(config);
+      const resolved = testing.resolveToolSearchConfig(config);
       const compacted = applyToolSearchCatalog({
         tools: [
           fakeTool(TOOL_SEARCH_CODE_MODE_TOOL_NAME, "code mode"),
@@ -85,7 +97,7 @@ describe("Tool Search", () => {
       ]);
       expect(compacted.catalogToolCount).toBe(1);
     } finally {
-      __testing.setToolSearchCodeModeSupportedForTest(undefined);
+      testing.setToolSearchCodeModeSupportedForTest(undefined);
     }
   });
 
@@ -121,24 +133,24 @@ describe("Tool Search", () => {
       `,
     });
 
-    expect(alpha.execute).toHaveBeenCalledWith(
-      "tool_search_code:call-1:fake_create_ticket:1",
-      {
-        value: "ship",
-      },
-      expect.any(AbortSignal),
-      undefined,
-      undefined,
-    );
-    expect(result.details).toMatchObject({
-      ok: true,
-      telemetry: {
-        catalogSize: 2,
-        searchCount: 1,
-        describeCount: 1,
-        callCount: 1,
-      },
-    });
+    const alphaCall = mockCall(vi.mocked(alpha.execute));
+    expect(alphaCall[0]).toBe("tool_search_code:call-1:fake_create_ticket:1");
+    expect(alphaCall[1]).toEqual({ value: "ship" });
+    expect(alphaCall[2]).toBeInstanceOf(AbortSignal);
+    expect(alphaCall[3]).toBeUndefined();
+    expect(alphaCall[4]).toBeUndefined();
+    const details = resultDetails(result);
+    expect(details.ok).toBe(true);
+    const telemetry = details.telemetry as {
+      catalogSize?: number;
+      searchCount?: number;
+      describeCount?: number;
+      callCount?: number;
+    };
+    expect(telemetry.catalogSize).toBe(2);
+    expect(telemetry.searchCount).toBe(1);
+    expect(telemetry.describeCount).toBe(1);
+    expect(telemetry.callCount).toBe(1);
   });
 
   it("scopes catalogs by run id when attempts share a session", async () => {
@@ -187,8 +199,8 @@ describe("Tool Search", () => {
       sessionKey: "agent:main:main",
       runId: "run-a",
     });
-    expect(__testing.sessionCatalogs.has("run:run-a")).toBe(false);
-    expect(__testing.sessionCatalogs.has("run:run-b")).toBe(true);
+    expect(testing.sessionCatalogs.has("run:run-a")).toBe(false);
+    expect(testing.sessionCatalogs.has("run:run-b")).toBe(true);
     expect(runATool.execute).toHaveBeenCalledTimes(1);
     expect(runBTool.execute).not.toHaveBeenCalled();
     clearToolSearchCatalog({ runId: "run-b" });
@@ -304,14 +316,10 @@ describe("Tool Search", () => {
 
     expect(compacted.tools).toEqual([]);
     expect(compacted.catalogToolCount).toBe(1);
-    expect(__testing.sessionCatalogs.get("session:session-client")?.entries).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({
-          id: "client:client:client_pick_file",
-          source: "client",
-        }),
-      ]),
-    );
+    const clientEntry = testing.sessionCatalogs
+      .get("session:session-client")
+      ?.entries.find((entry) => entry.id === "client:client:client_pick_file");
+    expect(clientEntry?.source).toBe("client");
   });
 
   it("wraps cataloged OpenClaw tools with before_tool_call hooks", async () => {
@@ -329,11 +337,13 @@ describe("Tool Search", () => {
       },
     });
 
-    const entry = __testing.sessionCatalogs
+    const entry = testing.sessionCatalogs
       .get("session:session-hooks")
       ?.entries.find((candidate) => candidate.name === "fake_hooked");
-    expect(entry).toBeTruthy();
-    expect(isToolWrappedWithBeforeToolCallHook(entry!.tool as AnyAgentTool)).toBe(true);
+    if (!entry) {
+      throw new Error("Expected fake_hooked catalog entry");
+    }
+    expect(isToolWrappedWithBeforeToolCallHook(entry.tool as AnyAgentTool)).toBe(true);
 
     const [runtimeCodeTool] = createToolSearchTools({
       sessionId: "session-hooks",
@@ -343,12 +353,11 @@ describe("Tool Search", () => {
     await runtimeCodeTool.execute("call-hooks", {
       code: `return await openclaw.tools.call("fake_hooked", { value: "ok" });`,
     });
-    expect(target.execute).toHaveBeenCalledWith(
-      "tool_search_code:call-hooks:fake_hooked:1",
-      { value: "ok" },
-      expect.any(AbortSignal),
-      undefined,
-    );
+    const targetCall = mockCall(vi.mocked(target.execute));
+    expect(targetCall[0]).toBe("tool_search_code:call-hooks:fake_hooked:1");
+    expect(targetCall[1]).toEqual({ value: "ok" });
+    expect(targetCall[2]).toBeInstanceOf(AbortSignal);
+    expect(targetCall[3]).toBeUndefined();
   });
 
   it("does not re-wrap abort-wrapped tools that already have before_tool_call hooks", () => {
@@ -372,7 +381,7 @@ describe("Tool Search", () => {
       },
     });
 
-    const entry = __testing.sessionCatalogs
+    const entry = testing.sessionCatalogs
       .get("session:session-hooks-abort")
       ?.entries.find((candidate) => candidate.name === "fake_already_hooked");
     expect(entry?.tool).toBe(abortWrapped);
@@ -402,40 +411,28 @@ describe("Tool Search", () => {
       `,
     });
 
-    expect(target.execute).toHaveBeenNthCalledWith(
-      1,
-      "tool_search_code:call-repeated:fake_repeated:1",
-      {
-        value: "one",
-      },
-      expect.any(AbortSignal),
-      undefined,
-      undefined,
-    );
-    expect(target.execute).toHaveBeenNthCalledWith(
-      2,
-      "tool_search_code:call-repeated:fake_repeated:2",
-      {
-        value: "two",
-      },
-      expect.any(AbortSignal),
-      undefined,
-      undefined,
-    );
+    const firstCall = mockCall(vi.mocked(target.execute));
+    expect(firstCall[0]).toBe("tool_search_code:call-repeated:fake_repeated:1");
+    expect(firstCall[1]).toEqual({ value: "one" });
+    expect(firstCall[2]).toBeInstanceOf(AbortSignal);
+    expect(firstCall[3]).toBeUndefined();
+    expect(firstCall[4]).toBeUndefined();
+    const secondCall = mockCall(vi.mocked(target.execute), 1);
+    expect(secondCall[0]).toBe("tool_search_code:call-repeated:fake_repeated:2");
+    expect(secondCall[1]).toEqual({ value: "two" });
+    expect(secondCall[2]).toBeInstanceOf(AbortSignal);
+    expect(secondCall[3]).toBeUndefined();
+    expect(secondCall[4]).toBeUndefined();
     await runtimeCodeTool.execute("call-repeated-again", {
       code: `return await openclaw.tools.call("fake_repeated", { value: "three" });`,
     });
 
-    expect(target.execute).toHaveBeenNthCalledWith(
-      3,
-      "tool_search_code:call-repeated-again:fake_repeated:1",
-      {
-        value: "three",
-      },
-      expect.any(AbortSignal),
-      undefined,
-      undefined,
-    );
+    const thirdCall = mockCall(vi.mocked(target.execute), 2);
+    expect(thirdCall[0]).toBe("tool_search_code:call-repeated-again:fake_repeated:1");
+    expect(thirdCall[1]).toEqual({ value: "three" });
+    expect(thirdCall[2]).toBeInstanceOf(AbortSignal);
+    expect(thirdCall[3]).toBeUndefined();
+    expect(thirdCall[4]).toBeUndefined();
   });
 
   it("routes bridged calls through the configured catalog executor", async () => {
@@ -469,17 +466,22 @@ describe("Tool Search", () => {
     );
 
     expect(target.execute).not.toHaveBeenCalled();
-    expect(executeTool).toHaveBeenCalledWith(
-      expect.objectContaining({
-        tool: expect.objectContaining({ name: "fake_lifecycle" }),
-        toolName: "fake_lifecycle",
-        toolCallId: "tool_search_code:call-lifecycle:fake_lifecycle:1",
-        parentToolCallId: "call-lifecycle",
-        input: { value: "ok" },
-        signal: expect.any(AbortSignal),
-        onUpdate,
-      }),
-    );
+    const firstExecuteInput = mockCall(executeTool)[0] as {
+      tool?: { name?: string };
+      toolName?: string;
+      toolCallId?: string;
+      parentToolCallId?: string;
+      input?: unknown;
+      signal?: unknown;
+      onUpdate?: unknown;
+    };
+    expect(firstExecuteInput.tool?.name).toBe("fake_lifecycle");
+    expect(firstExecuteInput.toolName).toBe("fake_lifecycle");
+    expect(firstExecuteInput.toolCallId).toBe("tool_search_code:call-lifecycle:fake_lifecycle:1");
+    expect(firstExecuteInput.parentToolCallId).toBe("call-lifecycle");
+    expect(firstExecuteInput.input).toEqual({ value: "ok" });
+    expect(firstExecuteInput.signal).toBeInstanceOf(AbortSignal);
+    expect(firstExecuteInput.onUpdate).toBe(onUpdate);
 
     await runtimeCallTool.execute(
       "call-lifecycle-structured",
@@ -492,18 +494,24 @@ describe("Tool Search", () => {
     );
 
     expect(target.execute).not.toHaveBeenCalled();
-    expect(executeTool).toHaveBeenNthCalledWith(
-      2,
-      expect.objectContaining({
-        tool: expect.objectContaining({ name: "fake_lifecycle" }),
-        toolName: "fake_lifecycle",
-        toolCallId: "tool_search_code:call-lifecycle-structured:fake_lifecycle:1",
-        parentToolCallId: "call-lifecycle-structured",
-        input: { value: "structured" },
-        signal: abortController.signal,
-        onUpdate,
-      }),
+    const secondExecuteInput = mockCall(executeTool, 1)[0] as {
+      tool?: { name?: string };
+      toolName?: string;
+      toolCallId?: string;
+      parentToolCallId?: string;
+      input?: unknown;
+      signal?: unknown;
+      onUpdate?: unknown;
+    };
+    expect(secondExecuteInput.tool?.name).toBe("fake_lifecycle");
+    expect(secondExecuteInput.toolName).toBe("fake_lifecycle");
+    expect(secondExecuteInput.toolCallId).toBe(
+      "tool_search_code:call-lifecycle-structured:fake_lifecycle:1",
     );
+    expect(secondExecuteInput.parentToolCallId).toBe("call-lifecycle-structured");
+    expect(secondExecuteInput.input).toEqual({ value: "structured" });
+    expect(secondExecuteInput.signal).toBe(abortController.signal);
+    expect(secondExecuteInput.onUpdate).toBe(onUpdate);
   });
 
   it("projects target tool calls after their Tool Search wrapper result", () => {
@@ -543,25 +551,40 @@ describe("Tool Search", () => {
     ]);
 
     expect(projected).toHaveLength(5);
-    expect(projected[2]).toMatchObject({
-      role: "assistant",
-      content: [
-        {
-          type: "toolCall",
-          id: "tool_search_code:wrapper-call:fake_target:1",
-          name: "fake_target",
-          arguments: { value: "ok" },
-          input: { value: "ok" },
-        },
-      ],
-    });
-    expect(projected[3]).toMatchObject({
-      role: "toolResult",
-      toolCallId: "tool_search_code:wrapper-call:fake_target:1",
-      toolName: "fake_target",
-      isError: false,
-      content: [{ type: "text", text: JSON.stringify({ ok: true }, null, 2) }],
-    });
+    const projectedToolCall = projected[2] as {
+      role?: string;
+      content?: Array<{
+        type?: string;
+        id?: string;
+        name?: string;
+        arguments?: unknown;
+        input?: unknown;
+      }>;
+    };
+    expect(projectedToolCall.role).toBe("assistant");
+    expect(projectedToolCall.content).toEqual([
+      {
+        type: "toolCall",
+        id: "tool_search_code:wrapper-call:fake_target:1",
+        name: "fake_target",
+        arguments: { value: "ok" },
+        input: { value: "ok" },
+      },
+    ]);
+    const projectedToolResult = projected[3] as {
+      role?: string;
+      toolCallId?: string;
+      toolName?: string;
+      isError?: boolean;
+      content?: unknown;
+    };
+    expect(projectedToolResult.role).toBe("toolResult");
+    expect(projectedToolResult.toolCallId).toBe("tool_search_code:wrapper-call:fake_target:1");
+    expect(projectedToolResult.toolName).toBe("fake_target");
+    expect(projectedToolResult.isError).toBe(false);
+    expect(projectedToolResult.content).toEqual([
+      { type: "text", text: JSON.stringify({ ok: true }, null, 2) },
+    ]);
     expect(projected[4]).toBe(messages[2]);
   });
 
@@ -589,13 +612,10 @@ describe("Tool Search", () => {
     });
 
     expect(target.execute).not.toHaveBeenCalled();
-    expect(result.details).toMatchObject({
-      ok: true,
-      value: "done",
-      telemetry: {
-        callCount: 0,
-      },
-    });
+    const details = resultDetails(result);
+    expect(details.ok).toBe(true);
+    expect(details.value).toBe("done");
+    expect((details.telemetry as { callCount?: number }).callCount).toBe(0);
   });
 
   it("waits for started bridged calls before returning code-mode success", async () => {
@@ -637,18 +657,15 @@ describe("Tool Search", () => {
       });
 
     await vi.waitFor(() => expect(target.execute).toHaveBeenCalledTimes(1));
-    await new Promise((resolve) => setTimeout(resolve, 20));
+    await new Promise<void>((resolve) => setImmediate(resolve));
     expect(settled).toBe(false);
     resolveTool?.();
     const result = await resultPromise;
 
-    expect(result.details).toMatchObject({
-      ok: true,
-      value: "done",
-      telemetry: {
-        callCount: 1,
-      },
-    });
+    const details = resultDetails(result);
+    expect(details.ok).toBe(true);
+    expect(details.value).toBe("done");
+    expect((details.telemetry as { callCount?: number }).callCount).toBe(1);
   });
 
   it("does not expose the host process to model-authored code", async () => {
@@ -851,8 +868,154 @@ describe("Tool Search", () => {
         code: `return await openclaw.tools.call("fake_abort_on_timeout", { value: "wait" });`,
       }),
     ).rejects.toThrow("tool_search_code timed out");
-    expect(observedSignal).toBeDefined();
-    expect(observedSignal?.aborted).toBe(true);
+    if (!observedSignal) {
+      throw new Error("Expected observed abort signal");
+    }
+    expect(observedSignal.aborted).toBe(true);
     expect(abortCount).toBe(1);
+  });
+
+  it("reuses an unchanged catalog within the same run", () => {
+    const codeTool = fakeTool(TOOL_SEARCH_CODE_MODE_TOOL_NAME, "code mode");
+    const alpha = pluginTool("fake_reuse_alpha", "Alpha tool");
+    const beta = pluginTool("fake_reuse_beta", "Beta tool");
+    const config = { tools: { toolSearch: true } } as never;
+    const sessionId = "session-catalog-reuse";
+
+    const first = applyToolSearchCatalog({
+      tools: [codeTool, alpha, beta],
+      config,
+      sessionId,
+    });
+    expect(first.catalogRegistered).toBe(true);
+    expect(first.catalogReused).toBe(false);
+
+    const catalogAfterFirst = testing.sessionCatalogs.get(`session:${sessionId}`);
+    expect(catalogAfterFirst).toBeDefined();
+
+    const second = applyToolSearchCatalog({
+      tools: [codeTool, alpha, beta],
+      config,
+      sessionId,
+    });
+    expect(second.catalogRegistered).toBe(true);
+    expect(second.catalogReused).toBe(true);
+    expect(testing.sessionCatalogs.get(`session:${sessionId}`)).toBe(catalogAfterFirst);
+
+    const laterRef = createToolSearchCatalogRef();
+    const later = applyToolSearchCatalog({
+      tools: [codeTool, alpha, beta],
+      config,
+      sessionId,
+      sessionKey: "agent:main:tool-search-reuse",
+      catalogRef: laterRef,
+    });
+    expect(later.catalogReused).toBe(true);
+    expect(laterRef.current).toBe(catalogAfterFirst);
+    expect(testing.sessionCatalogs.get("key:agent:main:tool-search-reuse")).toBe(catalogAfterFirst);
+  });
+
+  it("restores an unchanged catalog after run cleanup", () => {
+    const codeTool = fakeTool(TOOL_SEARCH_CODE_MODE_TOOL_NAME, "code mode");
+    const alpha = pluginTool("fake_xrun_alpha", "Alpha tool");
+    const beta = pluginTool("fake_xrun_beta", "Beta tool");
+    const config = { tools: { toolSearch: true } } as never;
+    const sessionId = "session-cross-run-reuse";
+    const firstRef = createToolSearchCatalogRef();
+
+    const first = applyToolSearchCatalog({
+      tools: [codeTool, alpha, beta],
+      config,
+      sessionId,
+      runId: "run-1",
+      catalogRef: firstRef,
+    });
+    expect(first.catalogReused).toBe(false);
+    const firstAlphaEntry = firstRef.current?.entries.find((entry) => entry.name === alpha.name);
+    expect(firstAlphaEntry).toBeDefined();
+
+    clearToolSearchCatalog({
+      sessionId,
+      runId: "run-1",
+      catalogRef: firstRef,
+    });
+    expect(firstRef.current).toBeUndefined();
+    expect(testing.sessionCatalogs.has("run:run-1")).toBe(false);
+
+    const secondRef = createToolSearchCatalogRef();
+    const second = applyToolSearchCatalog({
+      tools: [codeTool, alpha, beta],
+      config,
+      sessionId,
+      runId: "run-2",
+      catalogRef: secondRef,
+    });
+    expect(second.catalogRegistered).toBe(true);
+    expect(second.catalogReused).toBe(true);
+    expect(testing.sessionCatalogs.has("run:run-2")).toBe(true);
+    expect(secondRef.current?.entries.find((entry) => entry.name === alpha.name)).toBe(
+      firstAlphaEntry,
+    );
+  });
+
+  it("does not reuse when a same-named tool uses a different executable", () => {
+    const codeTool = fakeTool(TOOL_SEARCH_CODE_MODE_TOOL_NAME, "code mode");
+    const original = pluginTool("fake_exec_swap", "Stable description");
+    const config = { tools: { toolSearch: true } } as never;
+    const sessionId = "session-tool-exec-change";
+    const firstRef = createToolSearchCatalogRef();
+
+    applyToolSearchCatalog({
+      tools: [codeTool, original],
+      config,
+      sessionId,
+      runId: "run-exec-1",
+      catalogRef: firstRef,
+    });
+    clearToolSearchCatalog({
+      sessionId,
+      runId: "run-exec-1",
+      catalogRef: firstRef,
+    });
+
+    const replacement = pluginTool("fake_exec_swap", "Stable description");
+    const secondRef = createToolSearchCatalogRef();
+    const second = applyToolSearchCatalog({
+      tools: [codeTool, replacement],
+      config,
+      sessionId,
+      runId: "run-exec-2",
+      catalogRef: secondRef,
+    });
+    expect(second.catalogReused).toBe(false);
+    expect(secondRef.current?.entries.find((entry) => entry.name === replacement.name)?.tool).toBe(
+      replacement,
+    );
+  });
+
+  it("does not reuse when a same-named tool changes parameters", () => {
+    const codeTool = fakeTool(TOOL_SEARCH_CODE_MODE_TOOL_NAME, "code mode");
+    const tool = pluginTool("fake_schema_swap", "Stable description");
+    const config = { tools: { toolSearch: true } } as never;
+    const sessionId = "session-tool-schema-change";
+
+    applyToolSearchCatalog({
+      tools: [codeTool, tool],
+      config,
+      sessionId,
+    });
+    tool.parameters = {
+      type: "object",
+      properties: {
+        other: { type: "number" },
+      },
+    };
+
+    const second = applyToolSearchCatalog({
+      tools: [codeTool, tool],
+      config,
+      sessionId,
+    });
+    expect(second.catalogReused).toBe(false);
   });
 });

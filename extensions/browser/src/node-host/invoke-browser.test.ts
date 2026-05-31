@@ -1,3 +1,4 @@
+import { MAX_TIMER_TIMEOUT_MS } from "openclaw/plugin-sdk/number-runtime";
 import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 
 const controlServiceMocks = vi.hoisted(() => ({
@@ -141,6 +142,20 @@ beforeAll(async () => {
   ({ resetBrowserProxyCommandStateForTests, runBrowserProxyCommand } =
     await import("./invoke-browser.js"));
 });
+
+type BrowserDispatchRequest = {
+  path?: string;
+  query?: unknown;
+};
+
+function firstBrowserDispatchRequest(): BrowserDispatchRequest {
+  const [call] = dispatcherMocks.dispatch.mock.calls;
+  if (!call) {
+    throw new Error("expected browser dispatch call");
+  }
+  const [request] = call as [BrowserDispatchRequest, ...unknown[]];
+  return request;
+}
 
 describe("runBrowserProxyCommand", () => {
   beforeEach(() => {
@@ -335,11 +350,8 @@ describe("runBrowserProxyCommand", () => {
       }),
     );
 
-    expect(dispatcherMocks.dispatch).toHaveBeenCalledWith(
-      expect.objectContaining({
-        path: "/snapshot",
-      }),
-    );
+    const request = firstBrowserDispatchRequest();
+    expect(request.path).toBe("/snapshot");
   });
 
   it("rejects unauthorized body.profile when allowProfiles is configured", async () => {
@@ -436,12 +448,32 @@ describe("runBrowserProxyCommand", () => {
       }),
     );
 
-    expect(dispatcherMocks.dispatch).toHaveBeenCalledWith(
-      expect.objectContaining({
-        path: "/stop",
-        query: { profile: "openclaw" },
-      }),
-    );
+    const request = firstBrowserDispatchRequest();
+    expect(request.path).toBe("/stop");
+    expect(request.query).toEqual({ profile: "openclaw" });
+  });
+
+  it("caps browser proxy command timeout before dispatch", async () => {
+    dispatcherMocks.dispatch.mockResolvedValue({
+      status: 200,
+      body: { ok: true },
+    });
+    const timeoutSpy = vi
+      .spyOn(globalThis, "setTimeout")
+      .mockReturnValue(1 as unknown as ReturnType<typeof setTimeout>);
+
+    try {
+      await runBrowserProxyCommand(
+        JSON.stringify({
+          method: "GET",
+          path: "/snapshot",
+          timeoutMs: Number.MAX_SAFE_INTEGER,
+        }),
+      );
+      expect(timeoutSpy).toHaveBeenCalledWith(expect.any(Function), MAX_TIMER_TIMEOUT_MS);
+    } finally {
+      timeoutSpy.mockRestore();
+    }
   });
 
   it("rejects persistent profile creation when allowProfiles is empty", async () => {

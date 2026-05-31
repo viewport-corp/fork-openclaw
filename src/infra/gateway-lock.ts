@@ -4,6 +4,7 @@ import fsSync from "node:fs";
 import fs from "node:fs/promises";
 import net from "node:net";
 import path from "node:path";
+import { resolveTimestampMsToIsoString } from "@openclaw/normalization-core/number-coercion";
 import { z } from "zod";
 import { resolveConfigPath, resolveGatewayLockDir, resolveStateDir } from "../config/paths.js";
 import { isPidAlive } from "../shared/pid-alive.js";
@@ -53,7 +54,7 @@ export type GatewayLockOptions = {
 export class GatewayLockError extends Error {
   constructor(
     message: string,
-    public readonly cause?: unknown,
+    public override readonly cause?: unknown,
   ) {
     super(message);
     this.name = "GatewayLockError";
@@ -275,7 +276,7 @@ export async function acquireGatewayLock(
       const startTime = platform === "linux" ? readLinuxStartTime(process.pid) : null;
       const payload: LockPayload = {
         pid: process.pid,
-        createdAt: new Date(now()).toISOString(),
+        createdAt: resolveTimestampMsToIsoString(now()),
         configPath,
       };
       if (typeof startTime === "number" && Number.isFinite(startTime)) {

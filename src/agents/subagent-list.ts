@@ -1,10 +1,10 @@
+import { normalizeLowercaseStringOrEmpty } from "@openclaw/normalization-core/string-coerce";
 import { resolveSubagentLabel, sortSubagentRuns } from "../auto-reply/reply/subagents-utils.js";
 import { resolveStorePath } from "../config/sessions/paths.js";
 import { loadSessionStore } from "../config/sessions/store-load.js";
 import type { SessionEntry } from "../config/sessions/types.js";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
 import { parseAgentSessionKey, type ParsedAgentSessionKey } from "../routing/session-key.js";
-import { normalizeLowercaseStringOrEmpty } from "../shared/string-coerce.js";
 import {
   formatDurationCompact,
   formatTokenUsageDisplay,
@@ -60,11 +60,7 @@ type SessionEntryResolution = {
   entry: SessionEntry | undefined;
 };
 
-function resolveStorePathForKey(
-  cfg: OpenClawConfig,
-  key: string,
-  parsed?: ParsedAgentSessionKey | null,
-) {
+function resolveStorePathForKey(cfg: OpenClawConfig, parsed?: ParsedAgentSessionKey | null) {
   return resolveStorePath(cfg.session?.store, {
     agentId: parsed?.agentId,
   });
@@ -76,7 +72,7 @@ export function resolveSessionEntryForKey(params: {
   cache: Map<string, Record<string, SessionEntry>>;
 }): SessionEntryResolution {
   const parsed = parseAgentSessionKey(params.key);
-  const storePath = resolveStorePathForKey(params.cfg, params.key, parsed);
+  const storePath = resolveStorePathForKey(params.cfg, parsed);
   let store = params.cache.get(storePath);
   if (!store) {
     store = loadSessionStore(storePath);

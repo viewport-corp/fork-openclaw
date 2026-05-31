@@ -9,6 +9,7 @@ import { toSanitizedMarkdownHtml } from "../markdown.ts";
 import { openExternalUrlSafe } from "../open-external-url.ts";
 import type { SidebarContent } from "../sidebar-content.ts";
 import { detectTextDirection } from "../text-direction.ts";
+import { resolveToolDisplay } from "../tool-display.ts";
 import type {
   MessageContentItem,
   MessageGroup,
@@ -24,10 +25,14 @@ import { isToolResultMessage, normalizeMessage } from "./message-normalizer.ts";
 import { normalizeRoleForGrouping } from "./role-normalizer.ts";
 import {
   extractToolCards,
+  formatCollapsedToolPreviewText,
+  formatCollapsedToolSummaryText,
+  isToolCardError,
   renderExpandedToolCardContent,
   renderRawOutputToggle,
   renderToolCard,
   renderToolPreview,
+  resolveCollapsedToolDetail,
 } from "./tool-cards.ts";
 
 type AssistantAttachmentAvailability =
@@ -342,6 +347,7 @@ export function renderReadingIndicatorGroup(
 export function renderStreamingGroup(
   text: string,
   startedAt: number,
+  isStreaming = true,
   onOpenSidebar?: (content: SidebarContent) => void,
   assistant?: AssistantIdentity,
   basePath?: string,
@@ -360,7 +366,7 @@ export function renderStreamingGroup(
             timestamp: startedAt,
           },
           `stream:${startedAt}`,
-          { isStreaming: true, showReasoning: false },
+          { isStreaming, showReasoning: false },
           onOpenSidebar,
         )}
         <div class="chat-group-footer">
@@ -376,6 +382,8 @@ export function renderMessageGroup(
   group: MessageGroup,
   opts: {
     onOpenSidebar?: (content: SidebarContent) => void;
+    sessionKey?: string;
+    agentId?: string;
     showReasoning: boolean;
     showToolCalls?: boolean;
     autoExpandToolCalls?: boolean;
@@ -447,6 +455,8 @@ export function renderMessageGroup(
             item.key,
             {
               isStreaming: group.isStreaming && index === group.messages.length - 1,
+              sessionKey: opts.sessionKey,
+              agentId: opts.agentId,
               duplicateCount: item.duplicateCount ?? 1,
               showReasoning: opts.showReasoning,
               showToolCalls: opts.showToolCalls ?? true,
@@ -612,6 +622,8 @@ function renderMessageMeta(meta: GroupMeta | null) {
 }
 
 const SKIP_DELETE_CONFIRM_KEY = "openclaw:skipDeleteConfirm";
+const DELETE_CONFIRM_VIEWPORT_MARGIN_PX = 8;
+const DELETE_CONFIRM_TRIGGER_GAP_PX = 6;
 
 type DeleteConfirmSide = "left" | "right";
 
@@ -632,6 +644,63 @@ function dismissDeleteConfirm(element: Element) {
     return;
   }
   element.remove();
+}
+
+function resolveViewportBounds() {
+  const viewport = window.visualViewport;
+  const left = viewport?.offsetLeft ?? 0;
+  const top = viewport?.offsetTop ?? 0;
+  const width = viewport?.width ?? window.innerWidth ?? document.documentElement.clientWidth;
+  const height = viewport?.height ?? window.innerHeight ?? document.documentElement.clientHeight;
+
+  return {
+    bottom: top + height,
+    left,
+    right: left + width,
+    top,
+  };
+}
+
+function clampDeleteConfirmPosition(value: number, min: number, max: number) {
+  if (max < min) {
+    return min;
+  }
+  return Math.min(Math.max(value, min), max);
+}
+
+function placeDeleteConfirmPopover(
+  trigger: HTMLElement,
+  popover: HTMLElement,
+  side: DeleteConfirmSide,
+) {
+  const triggerRect = trigger.getBoundingClientRect();
+  const popoverRect = popover.getBoundingClientRect();
+  const viewport = resolveViewportBounds();
+  const margin = DELETE_CONFIRM_VIEWPORT_MARGIN_PX;
+  const gap = DELETE_CONFIRM_TRIGGER_GAP_PX;
+  const viewportWidth = viewport.right - viewport.left;
+  const viewportHeight = viewport.bottom - viewport.top;
+  const popoverWidth = Math.min(popoverRect.width, viewportWidth - margin * 2);
+  const popoverHeight = Math.min(popoverRect.height, viewportHeight - margin * 2);
+  const spaceAbove = triggerRect.top - viewport.top - margin - gap;
+  const spaceBelow = viewport.bottom - triggerRect.bottom - margin - gap;
+  const placeBelow = spaceAbove < popoverHeight && spaceBelow >= spaceAbove;
+  const desiredLeft = side === "left" ? triggerRect.right - popoverWidth : triggerRect.left;
+  const left = clampDeleteConfirmPosition(
+    desiredLeft,
+    viewport.left + margin,
+    viewport.right - margin - popoverWidth,
+  );
+  const desiredTop = placeBelow ? triggerRect.bottom + gap : triggerRect.top - gap - popoverHeight;
+  const top = clampDeleteConfirmPosition(
+    desiredTop,
+    viewport.top + margin,
+    viewport.bottom - margin - popoverHeight,
+  );
+
+  popover.style.left = `${Math.round(left)}px`;
+  popover.style.top = `${Math.round(top)}px`;
+  popover.dataset.placement = placeBelow ? "below" : "above";
 }
 
 function renderDeleteButton(onDelete: () => void, side: DeleteConfirmSide) {
@@ -667,6 +736,7 @@ function renderDeleteButton(onDelete: () => void, side: DeleteConfirmSide) {
             </div>
           `;
           wrap.appendChild(popover);
+          placeDeleteConfirmPopover(btn, popover, side);
 
           const cancel = popover.querySelector(".chat-delete-confirm__cancel")!;
           const yes = popover.querySelector(".chat-delete-confirm__yes")!;
@@ -704,6 +774,7 @@ function renderDeleteButton(onDelete: () => void, side: DeleteConfirmSide) {
 
           requestAnimationFrame(() => {
             if (!dismissed && popover.isConnected) {
+              placeDeleteConfirmPopover(btn, popover, side);
               document.addEventListener("click", closeOnOutside, true);
             }
           });
@@ -1282,6 +1353,8 @@ function renderInlineToolCards(
   toolCards: ToolCard[],
   opts: {
     messageKey: string;
+    sessionKey?: string;
+    agentId?: string;
     onOpenSidebar?: (content: SidebarContent) => void;
     isToolExpanded?: (toolCardId: string) => boolean;
     onToggleToolExpanded?: (toolCardId: string) => void;
@@ -1298,6 +1371,8 @@ function renderInlineToolCards(
           onToggleExpanded: opts.onToggleToolExpanded
             ? () => opts.onToggleToolExpanded?.(`${opts.messageKey}:toolcard:${index}`)
             : () => undefined,
+          sessionKey: opts.sessionKey,
+          agentId: opts.agentId,
           onOpenSidebar: opts.onOpenSidebar,
           canvasPluginSurfaceUrl: opts.canvasPluginSurfaceUrl,
           embedSandboxMode: opts.embedSandboxMode ?? "scripts",
@@ -1353,14 +1428,36 @@ function jsonSummaryLabel(parsed: unknown): string {
   return "JSON";
 }
 
-function renderExpandButton(markdown: string, onOpenSidebar: (content: SidebarContent) => void) {
+function renderExpandButton(
+  markdown: string,
+  onOpenSidebar: (content: SidebarContent) => void,
+  options?: {
+    sessionKey?: string;
+    agentId?: string;
+    messageId?: string;
+  },
+) {
   return html`
     <button
       class="btn btn--xs chat-expand-btn"
       type="button"
       title="Open in canvas"
       aria-label="Open in canvas"
-      @click=${() => onOpenSidebar({ kind: "markdown", content: markdown })}
+      @click=${() =>
+        onOpenSidebar({
+          kind: "markdown",
+          content: markdown,
+          ...(options?.sessionKey && options?.messageId
+            ? {
+                fullMessageRequest: {
+                  sessionKey: options.sessionKey,
+                  ...(options.agentId ? { agentId: options.agentId } : {}),
+                  messageId: options.messageId,
+                  kind: "assistant_message" as const,
+                },
+              }
+            : {}),
+        })}
     >
       <span class="chat-expand-btn__icon" aria-hidden="true">${icons.panelRightOpen}</span>
     </button>
@@ -1372,6 +1469,8 @@ function renderGroupedMessage(
   messageKey: string,
   opts: {
     isStreaming: boolean;
+    sessionKey?: string;
+    agentId?: string;
     duplicateCount?: number;
     showReasoning: boolean;
     showToolCalls?: boolean;
@@ -1433,8 +1532,25 @@ function renderGroupedMessage(
   const markdownBase = extractedText?.trim() ? extractedText : null;
   const reasoningMarkdown = extractedThinking ? formatReasoningMarkdown(extractedThinking) : null;
   const markdown = markdownBase;
+  const markdownRenderOptions = role === "user" ? { codeBlockChrome: "none" as const } : undefined;
   const canCopyMarkdown = role === "assistant" && Boolean(markdown?.trim());
   const canExpand = role === "assistant" && Boolean(onOpenSidebar && markdown?.trim());
+  const hasActions = canCopyMarkdown || canExpand;
+  const transcriptMeta =
+    m["__openclaw"] && typeof m["__openclaw"] === "object" && !Array.isArray(m["__openclaw"])
+      ? (m["__openclaw"] as Record<string, unknown>)
+      : null;
+  const sidebarMessageId =
+    typeof transcriptMeta?.id === "string"
+      ? transcriptMeta.id
+      : typeof m.messageId === "string"
+        ? m.messageId
+        : undefined;
+  const shouldFetchFullMessage = Boolean(
+    sidebarMessageId &&
+    !m.openclawMessageToolMirror &&
+    (transcriptMeta?.truncated === true || markdown?.includes("\n...(truncated)...")),
+  );
 
   // Detect pure-JSON messages and render as collapsible block
   const jsonResult = markdown && !opts.isStreaming ? detectJson(markdown) : null;
@@ -1443,6 +1559,7 @@ function renderGroupedMessage(
   const bubbleClasses = [
     "chat-bubble",
     isToolMessage ? "chat-bubble--tool-shell" : "",
+    hasActions ? "has-copy" : "",
     opts.isStreaming ? "streaming" : "",
     "fade-in",
   ]
@@ -1465,21 +1582,46 @@ function renderGroupedMessage(
   const toolMessageDisclosureId = `toolmsg:${messageKey}`;
   const toolMessageExpanded = opts.isToolMessageExpanded?.(toolMessageDisclosureId) ?? false;
   const toolNames = [...new Set(toolCards.map((c) => c.name))];
-  const toolSummaryLabel =
-    toolNames.length <= 3
-      ? toolNames.join(", ")
-      : `${toolNames.slice(0, 2).join(", ")} +${toolNames.length - 2} more`;
-  const toolPreview =
-    markdown && !toolSummaryLabel ? markdown.trim().replace(/\s+/g, " ").slice(0, 120) : "";
   const singleToolCard = toolCards.length === 1 ? toolCards[0] : null;
+  const toolMessageHasError = toolCards.some(isToolCardError);
+  const singleToolDisplay = singleToolCard
+    ? resolveToolDisplay({
+        name: singleToolCard.name,
+        args: singleToolCard.args,
+        detailMode: "explain",
+      })
+    : null;
+  const singleToolDisplayDetail =
+    !toolMessageHasError && singleToolCard && singleToolDisplay
+      ? resolveCollapsedToolDetail(singleToolCard, singleToolDisplay.detail)
+      : undefined;
+  const toolSummaryLabelRaw = toolMessageHasError
+    ? singleToolDisplay
+      ? singleToolDisplay.label
+      : toolNames.length <= 3
+        ? toolNames.join(", ")
+        : `${toolNames.slice(0, 2).join(", ")} +${toolNames.length - 2} more`
+    : singleToolDisplayDetail
+      ? singleToolCard?.outputText?.trim()
+        ? "output"
+        : undefined
+      : toolNames.length <= 3
+        ? toolNames.join(", ")
+        : `${toolNames.slice(0, 2).join(", ")} +${toolNames.length - 2} more`;
+  const toolSummaryLabel = formatCollapsedToolSummaryText(toolSummaryLabelRaw);
+  const toolPreview =
+    markdown && !toolSummaryLabel ? (formatCollapsedToolPreviewText(markdown) ?? "") : "";
+  const toolMessageLabelRaw = toolMessageHasError
+    ? "Tool error"
+    : singleToolDisplayDetail && !markdown && !hasImages
+      ? singleToolDisplayDetail
+      : singleToolDisplay && !markdown && !hasImages
+        ? singleToolDisplay.label
+        : "Tool output";
   const toolMessageLabel =
-    singleToolCard && !markdown && !hasImages
-      ? singleToolCard.outputText?.trim()
-        ? "Tool output"
-        : "Tool call"
-      : "Tool output";
+    formatCollapsedToolSummaryText(toolMessageLabelRaw) ?? toolMessageLabelRaw;
+  const toolMessageIcon = singleToolDisplay ? icons[singleToolDisplay.icon] : icons.zap;
 
-  const hasActions = canCopyMarkdown || canExpand;
   const duplicateCount = Math.max(1, Math.floor(opts.duplicateCount ?? 1));
 
   return html`
@@ -1487,7 +1629,13 @@ function renderGroupedMessage(
       ${renderReplyPill(normalizedMessage.replyTarget)}
       ${hasActions
         ? html`<div class="chat-bubble-actions">
-            ${canExpand ? renderExpandButton(markdown!, onOpenSidebar!) : nothing}
+            ${canExpand
+              ? renderExpandButton(markdown!, onOpenSidebar!, {
+                  sessionKey: opts.sessionKey,
+                  agentId: opts.agentId,
+                  messageId: shouldFetchFullMessage ? sidebarMessageId : undefined,
+                })
+              : nothing}
             ${canCopyMarkdown ? renderCopyAsMarkdownButton(markdown!) : nothing}
           </div>`
         : nothing}
@@ -1499,18 +1647,27 @@ function renderGroupedMessage(
                 : ""}"
             >
               <button
-                class="chat-tool-msg-summary"
+                class="chat-tool-msg-summary ${toolMessageHasError
+                  ? "chat-tool-msg-summary--error"
+                  : ""}"
                 type="button"
                 aria-expanded=${String(toolMessageExpanded)}
                 @click=${() => opts.onToggleToolMessageExpanded?.(toolMessageDisclosureId)}
               >
-                <span class="chat-tool-msg-summary__icon">${icons.zap}</span>
+                <span class="chat-tool-msg-summary__icon">${toolMessageIcon}</span>
                 <span class="chat-tool-msg-summary__label">${toolMessageLabel}</span>
                 ${toolSummaryLabel
                   ? html`<span class="chat-tool-msg-summary__names">${toolSummaryLabel}</span>`
                   : toolPreview
                     ? html`<span class="chat-tool-msg-summary__preview">${toolPreview}</span>`
                     : nothing}
+                ${toolMessageHasError
+                  ? html`<span
+                      class="chat-tool-msg-summary__error-badge"
+                      aria-label="Tool returned an error"
+                      >${icons.x}<span>Error</span></span
+                    >`
+                  : nothing}
               </button>
               ${toolMessageExpanded
                 ? html`
@@ -1543,13 +1700,16 @@ function renderGroupedMessage(
                           </details>`
                         : markdown
                           ? html`<div class="chat-text" dir="${detectTextDirection(markdown)}">
-                              ${unsafeHTML(toSanitizedMarkdownHtml(markdown))}
+                              ${unsafeHTML(
+                                toSanitizedMarkdownHtml(markdown, markdownRenderOptions),
+                              )}
                             </div>`
                           : nothing}
                       ${hasToolCards
                         ? singleToolCard && !markdown && !hasImages
                           ? renderExpandedToolCardContent(
                               singleToolCard,
+                              opts.sessionKey,
                               onOpenSidebar,
                               opts.canvasPluginSurfaceUrl,
                               opts.embedSandboxMode ?? "scripts",
@@ -1557,6 +1717,8 @@ function renderGroupedMessage(
                             )
                           : renderInlineToolCards(toolCards, {
                               messageKey,
+                              sessionKey: opts.sessionKey,
+                              agentId: opts.agentId,
                               onOpenSidebar,
                               isToolExpanded: opts.isToolExpanded,
                               onToggleToolExpanded: opts.onToggleToolExpanded,
@@ -1605,12 +1767,14 @@ function renderGroupedMessage(
                 </details>`
               : markdown
                 ? html`<div class="chat-text" dir="${detectTextDirection(markdown)}">
-                    ${unsafeHTML(toSanitizedMarkdownHtml(markdown))}
+                    ${unsafeHTML(toSanitizedMarkdownHtml(markdown, markdownRenderOptions))}
                   </div>`
                 : nothing}
             ${hasToolCards
               ? renderInlineToolCards(toolCards, {
                   messageKey,
+                  sessionKey: opts.sessionKey,
+                  agentId: opts.agentId,
                   onOpenSidebar,
                   isToolExpanded: opts.isToolExpanded,
                   onToggleToolExpanded: opts.onToggleToolExpanded,

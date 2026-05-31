@@ -34,7 +34,14 @@ export type GeneratedVideoAsset = {
   metadata?: Record<string, unknown>;
 };
 
-export type VideoGenerationResolution = "480P" | "720P" | "768P" | "1080P" | (string & {});
+export type VideoGenerationResolution =
+  | "360P"
+  | "480P"
+  | "540P"
+  | "720P"
+  | "768P"
+  | "1080P"
+  | (string & {});
 
 /**
  * Canonical semantic role hints for reference assets (first/last frame,
@@ -158,6 +165,8 @@ export type VideoGenerationProvider = {
   aliases?: string[];
   label?: string;
   defaultModel?: string;
+  /** Default provider operation timeout in milliseconds when caller/config omit timeoutMs. */
+  defaultTimeoutMs?: number;
   models?: string[];
   capabilities: VideoGenerationProviderCapabilities;
   isConfigured?: (ctx: VideoGenerationProviderConfiguredContext) => boolean;
@@ -171,8 +180,7 @@ export type VideoGenerationProvider = {
 };
 
 type AssertAssignable<_Left extends _Right, _Right> = true;
-
-type _VideoGenerationSdkCompat = [
+const videoGenerationSdkCompat: [
   AssertAssignable<GeneratedVideoAsset, CoreGeneratedVideoAsset>,
   AssertAssignable<CoreGeneratedVideoAsset, GeneratedVideoAsset>,
   AssertAssignable<VideoGenerationAssetRole, CoreVideoGenerationAssetRole>,
@@ -213,7 +221,8 @@ type _VideoGenerationSdkCompat = [
   AssertAssignable<CoreVideoGenerationSourceAsset, VideoGenerationSourceAsset>,
   AssertAssignable<VideoGenerationTransformCapabilities, CoreVideoGenerationTransformCapabilities>,
   AssertAssignable<CoreVideoGenerationTransformCapabilities, VideoGenerationTransformCapabilities>,
-];
+] = [] as never;
+void videoGenerationSdkCompat;
 
 export {
   DASHSCOPE_WAN_VIDEO_CAPABILITIES,

@@ -3,7 +3,10 @@ import {
   resolveStableChannelMessageIngress,
 } from "openclaw/plugin-sdk/channel-ingress-runtime";
 import { resolveInboundRouteEnvelopeBuilderWithRuntime } from "openclaw/plugin-sdk/inbound-envelope";
-import { normalizeOptionalString, normalizeStringEntries } from "openclaw/plugin-sdk/text-runtime";
+import {
+  normalizeOptionalString,
+  normalizeStringEntries,
+} from "openclaw/plugin-sdk/string-coerce-runtime";
 import {
   GROUP_POLICY_BLOCKED_LABEL,
   resolveAllowlistProviderRuntimeGroupPolicy,
@@ -347,7 +350,7 @@ export async function handleNextcloudTalkInbound(params: {
     CommandAuthorized: commandAuthorized,
   });
 
-  await core.channel.turn.runAssembled({
+  await core.channel.inbound.dispatchReply({
     cfg: config as OpenClawConfig,
     channel: CHANNEL_ID,
     accountId: account.accountId,

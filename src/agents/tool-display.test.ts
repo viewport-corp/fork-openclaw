@@ -1,7 +1,49 @@
 import { describe, expect, it } from "vitest";
-import { formatToolDetail, resolveToolDisplay } from "./tool-display.js";
+import { resolveToolSearchCodeDisplayTarget } from "./tool-display-common.js";
+import { formatToolDetail, formatToolSummary, resolveToolDisplay } from "./tool-display.js";
 
 describe("tool display details", () => {
+  it("summarizes tool-search code targets from described tool ids", () => {
+    expect(
+      resolveToolSearchCodeDisplayTarget({
+        code: "const tool = await openclaw.tools.describe('openclaw:core:exec'); return await openclaw.tools.call(tool.id, { command: 'echo hi' });",
+      }),
+    ).toEqual({
+      toolName: "openclaw:core:exec",
+      displayToolName: "exec",
+      displayArgs: { command: "echo hi" },
+      detail: "echo hi",
+      bridgeVerb: "call",
+    });
+  });
+
+  it("normalizes direct tool-search catalog ids to native display names and args", () => {
+    expect(
+      resolveToolSearchCodeDisplayTarget({
+        code: 'return await openclaw.tools.call("openclaw:core:exec", { command: "echo hi" });',
+      }),
+    ).toEqual({
+      toolName: "openclaw:core:exec",
+      displayToolName: "exec",
+      displayArgs: { command: "echo hi" },
+      detail: "echo hi",
+      bridgeVerb: "call",
+    });
+  });
+
+  it("preserves JS numeric literals in tool-search call args", () => {
+    expect(
+      resolveToolSearchCodeDisplayTarget({
+        code: 'return await openclaw.tools.call("web_search", { query: "OpenClaw", count: 1e3, limit: +3, threshold: .5 });',
+      })?.displayArgs,
+    ).toEqual({
+      query: "OpenClaw",
+      count: 1000,
+      limit: 3,
+      threshold: 0.5,
+    });
+  });
+
   it("skips zero/false values for optional detail fields", () => {
     const detail = formatToolDetail(
       resolveToolDisplay({
@@ -128,7 +170,7 @@ describe("tool display details", () => {
     );
 
     expect(detail).toContain("check git status -> show first 3 lines");
-    expect(detail).toContain(".openclaw/workspace)");
+    expect(detail).toContain("(agent)");
   });
 
   it("summarizes bash commands with the same command explainer", () => {
@@ -164,6 +206,62 @@ describe("tool display details", () => {
     );
 
     expect(detail).toBe("install dependencies (in ~/my-project)");
+  });
+
+  it("uses compact workspace markers for common workspace paths", () => {
+    expect(
+      formatToolDetail(
+        resolveToolDisplay({
+          name: "bash",
+          args: { command: "git fetch", workdir: "/Users/peter/mantis-workspace/openclaw" },
+          detailMode: "explain",
+        }),
+      ),
+    ).toBe("fetch git changes (agent)");
+
+    expect(
+      formatToolDetail(
+        resolveToolDisplay({
+          name: "bash",
+          args: { command: "git status", workdir: "/Users/peter/Projects/openclaw" },
+          detailMode: "explain",
+        }),
+      ),
+    ).toBe("check git status (repo)");
+
+    expect(
+      formatToolDetail(
+        resolveToolDisplay({
+          name: "bash",
+          args: {
+            command: "command -v discrawl",
+            workdir: "/root/.openclaw/sandboxes/agent-clawsweeper-sandbox-discor-766423d0",
+          },
+          detailMode: "explain",
+        }),
+      ),
+    ).toBe("command -v discrawl");
+  });
+
+  it("omits bash and exec names from compact tool summaries", () => {
+    expect(
+      formatToolSummary(
+        resolveToolDisplay({
+          name: "bash",
+          args: { command: "git fetch", workdir: "/Users/peter/mantis-workspace/openclaw" },
+          detailMode: "explain",
+        }),
+      ),
+    ).toBe("🛠️ fetch git changes (agent)");
+
+    expect(
+      formatToolSummary(
+        resolveToolDisplay({
+          name: "web_search",
+          args: { query: "OpenClaw docs" },
+        }),
+      ),
+    ).toBe('🔎 Web Search: for "OpenClaw docs"');
   });
 
   it("moves cd path to context suffix with multiple stages and raw command", () => {
@@ -342,5 +440,61 @@ describe("tool display details", () => {
     expect(pyDetail).toContain("run python3 inline script (heredoc)");
     expect(nodeCheckDetail).toContain("check js syntax for /tmp/test.js");
     expect(nodeShortCheckDetail).toContain("check js syntax for /tmp/test.js");
+  });
+
+  it("appends node name to exec detail when node is set", () => {
+    const detail = formatToolDetail(
+      resolveToolDisplay({
+        name: "exec",
+        args: {
+          command: "docker pull pihole/pihole:latest",
+          host: "node",
+          node: "raspberrypi",
+        },
+      }),
+    );
+
+    expect(detail).toContain("node: raspberrypi");
+  });
+
+  it("includes both cwd and node name in exec detail for known commands", () => {
+    const detail = formatToolDetail(
+      resolveToolDisplay({
+        name: "exec",
+        args: {
+          command: "npm install",
+          workdir: "/app",
+          host: "node",
+          node: "raspberrypi",
+        },
+      }),
+    );
+
+    expect(detail).toContain("(in /app)");
+    expect(detail).toContain("node: raspberrypi");
+  });
+
+  it("omits node label when node param is absent or empty", () => {
+    const detail = formatToolDetail(
+      resolveToolDisplay({
+        name: "exec",
+        args: { command: "npm install", host: "gateway" },
+      }),
+    );
+
+    expect(detail).not.toContain("node:");
+  });
+
+  it("omits node label when host is not 'node' even if node is set", () => {
+    for (const host of ["gateway", "sandbox", "auto"]) {
+      const detail = formatToolDetail(
+        resolveToolDisplay({
+          name: "exec",
+          args: { command: "npm install", host, node: "raspberrypi" },
+        }),
+      );
+
+      expect(detail).not.toContain("node:");
+    }
   });
 });

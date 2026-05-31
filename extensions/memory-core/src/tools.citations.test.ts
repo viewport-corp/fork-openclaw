@@ -207,6 +207,21 @@ describe("memory tools", () => {
     expect(getMemorySearchManagerMockCalls()).toBe(0);
   });
 
+  it("rejects fractional memory_get ranges before reading files", async () => {
+    setMemoryBackend("builtin");
+    const tool = createMemoryGetToolOrThrow();
+
+    await expect(
+      tool.execute("call_fractional_range", {
+        path: "memory/2026-02-19.md",
+        from: 1.5,
+        lines: 2,
+      }),
+    ).rejects.toThrow("from must be a positive integer");
+    expect(getReadAgentMemoryFileMockCalls()).toBe(0);
+    expect(getMemorySearchManagerMockCalls()).toBe(0);
+  });
+
   it("returns truncation metadata and a continuation notice for partial memory_get results", async () => {
     setMemoryBackend("builtin");
     setMemoryReadFileImpl(async (params: MemoryReadParams) => ({
@@ -247,7 +262,22 @@ describe("memory tools", () => {
         },
       ]);
 
-      const tool = createMemorySearchToolOrThrow();
+      const tool = createMemorySearchToolOrThrow({
+        config: asOpenClawConfig({
+          agents: { list: [{ id: "main", default: true }] },
+          plugins: {
+            entries: {
+              "memory-core": {
+                config: {
+                  dreaming: {
+                    enabled: true,
+                  },
+                },
+              },
+            },
+          },
+        }),
+      });
       await tool.execute("call_recall_persist", { query: "glacier backup" });
 
       const storePath = path.join(workspaceDir, "memory", ".dreams", "short-term-recall.json");
@@ -257,19 +287,20 @@ describe("memory tools", () => {
       };
       const entries = Object.values(store.entries ?? {});
       expect(entries).toHaveLength(1);
-      expect(entries[0]).toMatchObject({
-        path: "memory/2026-04-03.md",
-        recallCount: 1,
-      });
+      const entry = entries[0];
+      expect(entry?.path).toBe("memory/2026-04-03.md");
+      expect(entry?.recallCount).toBe(1);
       const events = await waitFor(async () => {
         const memoryEvents = await readMemoryHostEvents({ workspaceDir });
         expect(memoryEvents).toHaveLength(1);
         return memoryEvents;
       });
-      expect(events[0]).toMatchObject({
-        type: "memory.recall.recorded",
-        query: "glacier backup",
-      });
+      const event = events[0];
+      expect(event?.type).toBe("memory.recall.recorded");
+      if (!event || event.type !== "memory.recall.recorded") {
+        throw new Error("expected memory recall recorded event");
+      }
+      expect(event.query).toBe("glacier backup");
     } finally {
       await fs.rm(workspaceDir, { recursive: true, force: true });
     }
@@ -293,7 +324,7 @@ describe("memory tools", () => {
     const tool = createMemorySearchToolOrThrow();
     const result = await tool.execute("call_wiki_only", { query: "alpha", corpus: "wiki" });
 
-    expect(result.details).toMatchObject({
+    expect(result.details).toStrictEqual({
       results: [
         {
           corpus: "wiki",
@@ -304,6 +335,12 @@ describe("memory tools", () => {
           snippet: "Alpha wiki entry",
         },
       ],
+      citations: "auto",
+      debug: undefined,
+      fallback: undefined,
+      mode: undefined,
+      model: undefined,
+      provider: undefined,
     });
     expect(getMemorySearchManagerMockCalls()).toBe(0);
   });

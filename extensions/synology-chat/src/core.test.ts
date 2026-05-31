@@ -1,4 +1,4 @@
-import type { OpenClawConfig } from "openclaw/plugin-sdk/config-types";
+import type { OpenClawConfig } from "openclaw/plugin-sdk/config-contracts";
 import {
   createPluginSetupWizardConfigure,
   createTestWizardPrompter,
@@ -52,6 +52,26 @@ function createSynologySetupPrompter(params: { allowedUserIds?: string } = {}) {
   });
 }
 
+async function expectDmAuthorization(params: {
+  userId: string;
+  dmPolicy: "open" | "allowlist" | "disabled";
+  allowedUserIds: string[];
+  allowed: boolean;
+  reasonCode?: string;
+}): Promise<void> {
+  const auth = await authorizeUserForDmWithIngress({
+    accountId: "default",
+    userId: params.userId,
+    dmPolicy: params.dmPolicy,
+    allowedUserIds: params.allowedUserIds,
+  });
+
+  expect(auth.senderAccess.allowed).toBe(params.allowed);
+  if (params.reasonCode !== undefined) {
+    expect(auth.senderAccess.reasonCode).toBe(params.reasonCode);
+  }
+}
+
 describe("synology-chat core", () => {
   afterAll(() => {
     vi.unstubAllEnvs();
@@ -79,7 +99,7 @@ describe("synology-chat core", () => {
   });
 
   it("keeps the schema open for plugin-specific passthrough fields", () => {
-    expect([true, {}]).toContainEqual(SynologyChatChannelConfigSchema.schema.additionalProperties);
+    expect(SynologyChatChannelConfigSchema.schema.additionalProperties).toEqual({});
   });
 
   it("isolates direct-message sessions by account and user", () => {
@@ -304,6 +324,28 @@ describe("synology-chat account resolution", () => {
 
     process.env.SYNOLOGY_RATE_LIMIT = "0abc";
     expect(resolveAccount({ channels: { "synology-chat": {} } }).rateLimitPerMinute).toBe(30);
+
+    process.env.SYNOLOGY_RATE_LIMIT = "-1";
+    expect(resolveAccount({ channels: { "synology-chat": {} } }).rateLimitPerMinute).toBe(30);
+  });
+
+  it("ignores malformed configured rate limits", () => {
+    process.env.SYNOLOGY_RATE_LIMIT = "12";
+
+    expect(
+      resolveAccount({
+        channels: {
+          "synology-chat": { rateLimitPerMinute: -1 },
+        },
+      }).rateLimitPerMinute,
+    ).toBe(12);
+    expect(
+      resolveAccount({
+        channels: {
+          "synology-chat": { rateLimitPerMinute: 1.5 },
+        },
+      }).rateLimitPerMinute,
+    ).toBe(12);
   });
 });
 
@@ -317,74 +359,46 @@ describe("synology-chat security helpers", () => {
   });
 
   it("matches DM policy decisions through channel ingress", async () => {
-    await expect(
-      authorizeUserForDmWithIngress({
-        accountId: "default",
-        userId: "user1",
-        dmPolicy: "open",
-        allowedUserIds: [],
-      }),
-    ).resolves.toMatchObject({
-      senderAccess: {
-        allowed: false,
-        reasonCode: "dm_policy_not_allowlisted",
-      },
+    await expectDmAuthorization({
+      userId: "user1",
+      dmPolicy: "open",
+      allowedUserIds: [],
+      allowed: false,
+      reasonCode: "dm_policy_not_allowlisted",
     });
-    await expect(
-      authorizeUserForDmWithIngress({
-        accountId: "default",
-        userId: "user1",
-        dmPolicy: "open",
-        allowedUserIds: ["*"],
-      }),
-    ).resolves.toMatchObject({ senderAccess: { allowed: true } });
-    await expect(
-      authorizeUserForDmWithIngress({
-        accountId: "default",
-        userId: "user1",
-        dmPolicy: "disabled",
-        allowedUserIds: ["user1"],
-      }),
-    ).resolves.toMatchObject({
-      senderAccess: {
-        allowed: false,
-        reasonCode: "dm_policy_disabled",
-      },
+    await expectDmAuthorization({
+      userId: "user1",
+      dmPolicy: "open",
+      allowedUserIds: ["*"],
+      allowed: true,
     });
-    await expect(
-      authorizeUserForDmWithIngress({
-        accountId: "default",
-        userId: "user1",
-        dmPolicy: "allowlist",
-        allowedUserIds: [],
-      }),
-    ).resolves.toMatchObject({
-      senderAccess: {
-        allowed: false,
-        reasonCode: "dm_policy_not_allowlisted",
-      },
+    await expectDmAuthorization({
+      userId: "user1",
+      dmPolicy: "disabled",
+      allowedUserIds: ["user1"],
+      allowed: false,
+      reasonCode: "dm_policy_disabled",
     });
-    await expect(
-      authorizeUserForDmWithIngress({
-        accountId: "default",
-        userId: "user9",
-        dmPolicy: "allowlist",
-        allowedUserIds: ["user1"],
-      }),
-    ).resolves.toMatchObject({
-      senderAccess: {
-        allowed: false,
-        reasonCode: "dm_policy_not_allowlisted",
-      },
+    await expectDmAuthorization({
+      userId: "user1",
+      dmPolicy: "allowlist",
+      allowedUserIds: [],
+      allowed: false,
+      reasonCode: "dm_policy_not_allowlisted",
     });
-    await expect(
-      authorizeUserForDmWithIngress({
-        accountId: "default",
-        userId: "user1",
-        dmPolicy: "allowlist",
-        allowedUserIds: ["user1", "user2"],
-      }),
-    ).resolves.toMatchObject({ senderAccess: { allowed: true } });
+    await expectDmAuthorization({
+      userId: "user9",
+      dmPolicy: "allowlist",
+      allowedUserIds: ["user1"],
+      allowed: false,
+      reasonCode: "dm_policy_not_allowlisted",
+    });
+    await expectDmAuthorization({
+      userId: "user1",
+      dmPolicy: "allowlist",
+      allowedUserIds: ["user1", "user2"],
+      allowed: true,
+    });
   });
 
   it("redacts Synology user IDs and allowlist entries from ingress state/decision", async () => {

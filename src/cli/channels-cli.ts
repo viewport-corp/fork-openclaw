@@ -1,9 +1,9 @@
 import type { Command } from "commander";
+import { formatDocsLink } from "../../packages/terminal-core/src/links.js";
+import { theme } from "../../packages/terminal-core/src/theme.js";
 import { danger } from "../globals.js";
 import { defaultRuntime } from "../runtime.js";
 import { createLazyImportLoader } from "../shared/lazy-promise.js";
-import { formatDocsLink } from "../terminal/links.js";
-import { theme } from "../terminal/theme.js";
 import { resolveCliArgvInvocation } from "./argv-invocation.js";
 import { runChannelLogin, runChannelLogout } from "./channel-auth.js";
 import { formatCliChannelOptions } from "./channel-options.js";
@@ -130,6 +130,7 @@ export async function registerChannelsCli(
   channels
     .command("status")
     .description("Show gateway channel status (use status --deep for local)")
+    .option("--channel <name>", `Only show one channel (${formatCliChannelOptions(["all"])})`)
     .option("--probe", "Probe channel credentials", false)
     .option("--timeout <ms>", "Timeout in ms", "10000")
     .option("--json", "Output JSON", false)

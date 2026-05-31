@@ -2,7 +2,8 @@ import { readBooleanParam } from "openclaw/plugin-sdk/boolean-param";
 import {
   createActionGate,
   jsonResult,
-  readNumberParam,
+  readNonNegativeIntegerParam,
+  readPositiveIntegerParam,
   readReactionParams,
   readStringParam,
 } from "openclaw/plugin-sdk/channel-actions";
@@ -11,20 +12,27 @@ import type {
   ChannelMessageActionName,
 } from "openclaw/plugin-sdk/channel-contract";
 import { createLazyRuntimeNamedExport } from "openclaw/plugin-sdk/lazy-runtime";
-import { normalizeOptionalLowercaseString } from "openclaw/plugin-sdk/text-runtime";
+import { createSubsystemLogger } from "openclaw/plugin-sdk/runtime-env";
+import { normalizeOptionalLowercaseString } from "openclaw/plugin-sdk/string-coerce-runtime";
 import { extractToolSend } from "openclaw/plugin-sdk/tool-send";
 import { resolveIMessageAccount } from "./accounts.js";
 import { IMESSAGE_ACTION_NAMES, IMESSAGE_ACTIONS } from "./actions-contract.js";
 import { DEFAULT_IMESSAGE_PROBE_TIMEOUT_MS } from "./constants.js";
 import { describeIMessageMessageTool } from "./message-tool-api.js";
-import { findLatestIMessageEntryForChat, type IMessageChatContext } from "./monitor-reply-cache.js";
-import { getCachedIMessagePrivateApiStatus } from "./probe.js";
+import {
+  findLatestIMessageEntryForChat,
+  rememberIMessageReplyCache,
+  type IMessageChatContext,
+} from "./monitor-reply-cache.js";
+import { getCachedIMessagePrivateApiStatus, probeIMessagePrivateApi } from "./probe.js";
 import { parseIMessageTarget, type IMessageTarget } from "./targets.js";
 
 const loadIMessageActionsRuntime = createLazyRuntimeNamedExport(
   () => import("./actions.runtime.js"),
   "imessageActionsRuntime",
 );
+
+const log = createSubsystemLogger("channels/imessage");
 
 const providerId = "imessage";
 
@@ -34,6 +42,24 @@ const SUPPORTED_ACTIONS = new Set<ChannelMessageActionName>([
 ]);
 function readMessageText(params: Record<string, unknown>): string | undefined {
   return readStringParam(params, "text") ?? readStringParam(params, "message");
+}
+
+function rememberOutboundBridgeMessage(params: {
+  accountId: string;
+  messageId?: string;
+  chatGuid: string;
+}): void {
+  const messageId = params.messageId?.trim();
+  if (!messageId || messageId === "ok" || messageId === "unknown") {
+    return;
+  }
+  rememberIMessageReplyCache({
+    accountId: params.accountId,
+    messageId,
+    chatGuid: params.chatGuid,
+    timestamp: Date.now(),
+    isFromMe: true,
+  });
 }
 
 /**
@@ -78,7 +104,7 @@ async function resolveChatGuid(params: {
   if (explicitChatGuid) {
     return explicitChatGuid;
   }
-  const explicitChatId = readNumberParam(params.actionParams, "chatId", { integer: true });
+  const explicitChatId = readPositiveIntegerParam(params.actionParams, "chatId");
   if (typeof explicitChatId === "number") {
     const resolved = await params.runtime.resolveChatGuidForTarget({
       target: { kind: "chat_id", chatId: explicitChatId },
@@ -173,7 +199,7 @@ function buildChatContextFromActionParams(params: {
 }): IMessageChatContext {
   const explicitChatGuid = readStringParam(params.actionParams, "chatGuid")?.trim();
   const explicitChatIdentifier = readStringParam(params.actionParams, "chatIdentifier")?.trim();
-  const explicitChatId = readNumberParam(params.actionParams, "chatId", { integer: true });
+  const explicitChatId = readPositiveIntegerParam(params.actionParams, "chatId");
   // Trim before the truthy check so a whitespace-only currentChannelId can't
   // reach parseIMessageTarget (which throws on empty/whitespace input and
   // would abort the whole action with a confusing "target is required").
@@ -391,13 +417,21 @@ export const imessageMessageActions: ChannelMessageActionAdapter = {
         // status adapter, which doesn't fire eagerly on first dispatch. Run
         // an inline probe so the first react/send-rich attempt after `imsg
         // launch` succeeds without requiring a manual `channels status`.
-        const { probeIMessagePrivateApi } = await import("./probe.js");
         privateApiStatus = await probeIMessagePrivateApi(
           cliPathForProbe,
           account.config.probeTimeoutMs ?? DEFAULT_IMESSAGE_PROBE_TIMEOUT_MS,
         );
       }
       if (!privateApiStatus?.available) {
+        // Surface the silent-drop case: the throw becomes a tool-result
+        // `success:false`, which the model may or may not relay clearly to the
+        // user. Without a log line, an operator has no signal that a reply
+        // disappeared — they only see "channel: running" in `channels status`.
+        // Common cause: gateway restart un-injects the imsg-bridge-helper.dylib
+        // from Messages.app while imsg rpc keeps running.
+        log.warn(
+          `iMessage ${action} blocked: private API bridge unavailable (accountId=${account.accountId}, cliPath=${cliPathForProbe}). Run \`imsg launch\` to re-inject the dylib, then \`openclaw channels status\` to refresh.`,
+        );
         throw new Error(
           `iMessage ${action} requires the imsg private API bridge. Run imsg launch, then openclaw channels status to refresh capability detection.`,
         );
@@ -452,7 +486,7 @@ export const imessageMessageActions: ChannelMessageActionAdapter = {
         );
       }
       const resolvedMessageId = messageId();
-      const partIndex = readNumberParam(params, "partIndex", { integer: true });
+      const partIndex = readNonNegativeIntegerParam(params, "partIndex");
       const resolvedChatGuid = await chatGuid();
       const reactionsToSend = remove && !reaction ? [...TAPBACK_KINDS] : reaction ? [reaction] : [];
       for (const kind of reactionsToSend) {
@@ -478,7 +512,7 @@ export const imessageMessageActions: ChannelMessageActionAdapter = {
       if (!text) {
         throw new Error("iMessage edit requires text, newText, or message.");
       }
-      const partIndex = readNumberParam(params, "partIndex", { integer: true });
+      const partIndex = readNonNegativeIntegerParam(params, "partIndex");
       const backwardsCompatMessage = readStringParam(params, "backwardsCompatMessage");
       const resolvedChatGuid = await chatGuid();
       await runtime.editMessage({
@@ -495,7 +529,7 @@ export const imessageMessageActions: ChannelMessageActionAdapter = {
     if (action === "unsend") {
       await assertPrivateApiEnabled();
       const resolvedMessageId = messageId({ requireFromMe: true });
-      const partIndex = readNumberParam(params, "partIndex", { integer: true });
+      const partIndex = readNonNegativeIntegerParam(params, "partIndex");
       const resolvedChatGuid = await chatGuid();
       await runtime.unsendMessage({
         chatGuid: resolvedChatGuid,
@@ -535,7 +569,7 @@ export const imessageMessageActions: ChannelMessageActionAdapter = {
           );
         }
       }
-      const partIndex = readNumberParam(params, "partIndex", { integer: true });
+      const partIndex = readNonNegativeIntegerParam(params, "partIndex");
       const resolvedChatGuid = await chatGuid();
       const result = await runtime.sendRichMessage({
         chatGuid: resolvedChatGuid,
@@ -544,6 +578,11 @@ export const imessageMessageActions: ChannelMessageActionAdapter = {
         partIndex: typeof partIndex === "number" ? partIndex : undefined,
         attachment: attachment?.spec ?? undefined,
         options: { ...opts, chatGuid: resolvedChatGuid },
+      });
+      rememberOutboundBridgeMessage({
+        accountId: account.accountId,
+        messageId: result.messageId,
+        chatGuid: resolvedChatGuid,
       });
       return jsonResult({ ok: true, messageId: result.messageId, repliedTo: resolvedMessageId });
     }
@@ -563,6 +602,11 @@ export const imessageMessageActions: ChannelMessageActionAdapter = {
         text,
         effectId,
         options: { ...opts, chatGuid: resolvedChatGuid },
+      });
+      rememberOutboundBridgeMessage({
+        accountId: account.accountId,
+        messageId: result.messageId,
+        chatGuid: resolvedChatGuid,
       });
       return jsonResult({ ok: true, messageId: result.messageId, effect: effectId });
     }
@@ -640,6 +684,11 @@ export const imessageMessageActions: ChannelMessageActionAdapter = {
         filename,
         asVoice: asVoice ?? undefined,
         options: { ...opts, chatGuid: resolvedChatGuid },
+      });
+      rememberOutboundBridgeMessage({
+        accountId: account.accountId,
+        messageId: result.messageId,
+        chatGuid: resolvedChatGuid,
       });
       return jsonResult({ ok: true, messageId: result.messageId });
     }

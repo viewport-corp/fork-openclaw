@@ -54,8 +54,8 @@ function installRuntime(params?: {
 }) {
   const runtime = {
     channel: {
-      turn: {
-        runAssembled: vi.fn(async () => undefined),
+      inbound: {
+        dispatchReply: vi.fn(async () => undefined),
       },
       pairing: {
         readAllowFromStore: vi.fn(async () => []),
@@ -82,6 +82,22 @@ function createRuntimeEnv() {
     log: vi.fn(),
     error: vi.fn(),
   } as unknown as RuntimeEnv;
+}
+
+function requireFirstMockArg(mock: ReturnType<typeof vi.fn>, label: string): unknown {
+  const [call] = mock.mock.calls;
+  if (!call) {
+    throw new Error(`expected ${label}`);
+  }
+  return call[0];
+}
+
+function requireFirstSendMessageCall(): [unknown, unknown, unknown] {
+  const [call] = sendMessageNextcloudTalkMock.mock.calls;
+  if (!call) {
+    throw new Error("expected Nextcloud Talk send call");
+  }
+  return call as [unknown, unknown, unknown];
 }
 
 function createAccount(
@@ -154,21 +170,25 @@ describe("nextcloud-talk inbound behavior", () => {
       statusSink,
     });
 
-    expect(issueChallenge).toHaveBeenCalledWith(
-      expect.objectContaining({
-        senderId: "user-1",
-        senderIdLine: "Your Nextcloud user id: user-1",
-        meta: { name: "Alice" },
-      }),
-    );
-    expect(sendMessageNextcloudTalkMock).toHaveBeenCalledWith(
-      "room-1",
-      "Pair with code 123456",
-      expect.objectContaining({
-        cfg: { channels: { "nextcloud-talk": {} } },
-        accountId: "default",
-      }),
-    );
+    const challengeParams = requireFirstMockArg(
+      issueChallenge,
+      "Nextcloud Talk pairing challenge",
+    ) as {
+      meta?: { name?: string };
+      senderId?: string;
+      senderIdLine?: string;
+    };
+    expect(challengeParams.senderId).toBe("user-1");
+    expect(challengeParams.senderIdLine).toBe("Your Nextcloud user id: user-1");
+    expect(challengeParams.meta).toEqual({ name: "Alice" });
+    expect(sendMessageNextcloudTalkMock).toHaveBeenCalledTimes(1);
+    const sendArgs = requireFirstSendMessageCall();
+    expect(sendArgs[0]).toBe("room-1");
+    expect(sendArgs[1]).toBe("Pair with code 123456");
+    expect(sendArgs[2]).toEqual({
+      cfg: { channels: { "nextcloud-talk": {} } },
+      accountId: "default",
+    });
     expect(statusSink).toHaveBeenCalledWith({ lastInboundAt: 1_736_380_800_000 });
     const outboundStatus = statusSink.mock.calls
       .map(([status]) => status as { lastOutboundAt?: unknown })
@@ -251,7 +271,7 @@ describe("nextcloud-talk inbound behavior", () => {
       runtime,
     });
 
-    expect(coreRuntime.channel.turn.runAssembled).not.toHaveBeenCalled();
+    expect(coreRuntime.channel.inbound.dispatchReply).not.toHaveBeenCalled();
     expect(buildMentionRegexes).not.toHaveBeenCalled();
     expect(runtime.log).toHaveBeenCalledWith(
       "nextcloud-talk: drop control command (unauthorized) target=user-1",
@@ -280,10 +300,10 @@ describe("nextcloud-talk inbound behavior", () => {
       runtime: createRuntimeEnv(),
     });
 
-    expect(coreRuntime.channel.turn.runAssembled).toHaveBeenCalledWith(
-      expect.objectContaining({
-        replyPipeline: {},
-      }),
-    );
+    const assembledRequest = requireFirstMockArg(
+      coreRuntime.channel.inbound.dispatchReply as ReturnType<typeof vi.fn>,
+      "Nextcloud Talk assembled request",
+    ) as { replyPipeline?: unknown };
+    expect(assembledRequest.replyPipeline).toEqual({});
   });
 });

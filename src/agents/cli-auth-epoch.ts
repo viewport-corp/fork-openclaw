@@ -1,5 +1,5 @@
 import crypto from "node:crypto";
-import { normalizeOptionalString } from "../shared/string-coerce.js";
+import { normalizeOptionalString } from "@openclaw/normalization-core/string-coerce";
 import { loadAuthProfileStoreForRuntime } from "./auth-profiles/store.js";
 import type { AuthProfileCredential, AuthProfileStore } from "./auth-profiles/types.js";
 import {
@@ -38,6 +38,9 @@ export function resetCliAuthEpochTestDeps(): void {
 }
 
 function hashCliAuthEpochPart(value: string): string {
+  // Epoch hashes detect local auth-state changes; they are not password
+  // storage or credential verification.
+  // codeql[js/insufficient-password-hash]
   return crypto.createHash("sha256").update(value).digest("hex");
 }
 

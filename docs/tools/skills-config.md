@@ -25,6 +25,14 @@ Most skills loader/install configuration lives under `skills` in
       nodeManager: "npm", // npm | pnpm | yarn | bun (Gateway runtime still Node; bun not recommended)
       allowUploadedArchives: false,
     },
+    workshop: {
+      autonomous: {
+        enabled: false,
+      },
+      approvalPolicy: "pending", // pending | auto
+      maxPending: 50,
+      maxSkillBytes: 40000,
+    },
     entries: {
       "image-lab": {
         enabled: true,
@@ -90,9 +98,13 @@ Rules:
   bundled skills in the list are eligible (managed, agent, and workspace skills unaffected).
 - `load.extraDirs`: additional skill directories to scan (lowest precedence).
 - `load.allowSymlinkTargets`: trusted real target directories that symlinked
-  skill folders may resolve into even when the symlink lives outside that
-  target root. Use this for intentional sibling-repo layouts such as
-  `~/.agents/skills/manager -> ~/Projects/manager/skills`.
+  workspace, project-agent, or extra-dir skill folders may resolve into even
+  when the symlink lives outside that target root. Use this for intentional
+  sibling-repo layouts such as
+  `<workspace>/skills/manager -> ~/Projects/manager/skills`. Managed
+  `~/.openclaw/skills` and personal `~/.agents/skills` roots may follow
+  skill-directory symlinks from local skill managers by default, but every
+  `SKILL.md` still has to resolve inside its own skill directory.
 - `load.watch`: watch skill folders and refresh the skills snapshot (default: true).
 - `load.watchDebounceMs`: debounce for skill watcher events in milliseconds (default: 250).
 - `install.preferBrew`: prefer brew installers when available (default: true).
@@ -106,6 +118,18 @@ Rules:
   clients to install private zip archives staged through `skills.upload.*`
   (default: false). This only enables the uploaded-archive path; normal ClawHub
   installs do not require it.
+- `workshop.autonomous.enabled`: allow agents to create pending Skill Workshop
+  proposals from durable conversation signals after successful turns (default:
+  false). User-prompted skill creation still goes through Skill Workshop.
+- `workshop.approvalPolicy`: proposal lifecycle policy. `pending` requires
+  approval before agent-initiated apply/reject/quarantine actions; `auto`
+  allows those actions without approval.
+- `workshop.maxPending`: maximum pending/quarantined proposals retained per
+  workspace (default: 50).
+- `workshop.maxSkillBytes`: maximum generated proposal body size in bytes
+  (default: 40000).
+  Proposal descriptions are also hard-capped at 160 bytes because they can be
+  shown in skill discovery and proposal listings.
 - `entries.<skillKey>`: per-skill overrides.
 - `agents.defaults.skills`: optional default skill allowlist inherited by agents
   that omit `agents.list[].skills`.
@@ -114,10 +138,10 @@ Rules:
 
 ## Symlinked sibling repos
 
-By default, each skill root is a containment boundary. If a skill folder under
-`~/.agents/skills` is a symlink that resolves outside `~/.agents/skills`,
-OpenClaw skips it and logs `Skipping escaped skill path outside its configured
-root`.
+By default, workspace, project-agent, extra-dir, and bundled skill roots are
+containment boundaries. If a skill folder under `<workspace>/skills` is a
+symlink that resolves outside `<workspace>/skills`, OpenClaw skips it and logs
+`Skipping escaped skill path outside its configured root`.
 
 Keep the symlink layout and allow only the trusted target root:
 
@@ -133,10 +157,13 @@ Keep the symlink layout and allow only the trusted target root:
 ```
 
 With this config, a symlink such as
-`~/.agents/skills/manager -> ~/Projects/manager/skills` is accepted after
+`<workspace>/skills/manager -> ~/Projects/manager/skills` is accepted after
 realpath resolution. `extraDirs` also scans the sibling repo directly, while
-`allowSymlinkTargets` preserves the symlinked path for existing agent-skill
-layouts. Keep target entries narrow; do not point at broad roots such as `~` or
+`allowSymlinkTargets` preserves the symlinked path for existing workspace-skill
+layouts. Managed `~/.openclaw/skills` and personal `~/.agents/skills`
+directories already accept skill-directory symlinks because those roots are
+user-owned local skill-manager surfaces; per-skill `SKILL.md` containment still
+applies. Keep target entries narrow; do not point at broad roots such as `~` or
 `~/Projects` unless every skill tree under that root is trusted.
 
 Per-skill fields:
@@ -167,6 +194,8 @@ Use one of:
 
 - `agents.defaults.sandbox.docker.env` for the Docker backend (or per-agent `agents.list[].sandbox.docker.env`).
 - Bake the env into your custom sandbox image or remote sandbox environment.
+
+For Docker sandboxes, configured `sandbox.docker.env` values become explicit container environment variables. Users with Docker daemon access can inspect them through Docker metadata, so use a mounted secret file, custom image, or another delivery path when that exposure is not acceptable.
 
 ## Related
 

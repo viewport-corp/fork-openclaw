@@ -24,14 +24,10 @@ describe("tool mutation helpers", () => {
       { path: "/tmp/demo.txt", id: 42 },
       "write /tmp/demo.txt",
     );
-    expect(writeFingerprint).toContain("tool=write");
-    expect(writeFingerprint).toContain("path=/tmp/demo.txt");
-    expect(writeFingerprint).toContain("id=42");
-    expect(writeFingerprint).not.toContain("meta=write /tmp/demo.txt");
+    expect(writeFingerprint).toBe("tool=write|path=/tmp/demo.txt|id=42");
 
     const metaOnlyFingerprint = buildToolActionFingerprint("exec", { command: "ls -la" }, "ls -la");
-    expect(metaOnlyFingerprint).toContain("tool=exec");
-    expect(metaOnlyFingerprint).toContain("meta=ls -la");
+    expect(metaOnlyFingerprint).toBe("tool=exec|meta=ls -la");
 
     const readFingerprint = buildToolActionFingerprint("read", { path: "/tmp/demo.txt" });
     expect(readFingerprint).toBeUndefined();
@@ -65,6 +61,16 @@ describe("tool mutation helpers", () => {
       buildToolMutationState("subagents", { action: "steer", target: "worker-1" }).mutatingAction,
     ).toBe(true);
     expect(buildToolMutationState("subagents", { action: "list" }).mutatingAction).toBe(false);
+    expect(buildToolMutationState("get_goal", { sessionKey: "agent:main" }).mutatingAction).toBe(
+      false,
+    );
+    expect(buildToolMutationState("create_goal", { sessionKey: "agent:main" }).mutatingAction).toBe(
+      true,
+    );
+    expect(
+      buildToolMutationState("update_goal", { sessionKey: "agent:main", status: "complete" })
+        .mutatingAction,
+    ).toBe(true);
   });
 
   it("matches tool actions by fingerprint and fails closed on asymmetric data", () => {

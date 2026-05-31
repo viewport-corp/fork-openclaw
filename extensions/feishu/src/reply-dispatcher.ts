@@ -1,16 +1,16 @@
 import { formatReasoningMessage } from "openclaw/plugin-sdk/agent-runtime";
 import { logTypingFailure } from "openclaw/plugin-sdk/channel-feedback";
-import { createChannelMessageReplyPipeline } from "openclaw/plugin-sdk/channel-message";
+import { createChannelMessageReplyPipeline } from "openclaw/plugin-sdk/channel-outbound";
 import {
   formatChannelProgressDraftLineForEntry,
   isChannelProgressDraftWorkToolName,
-} from "openclaw/plugin-sdk/channel-streaming";
+} from "openclaw/plugin-sdk/channel-outbound";
 import {
   resolveSendableOutboundReplyParts,
   resolveTextChunksWithFallback,
   sendMediaWithLeadingCaption,
 } from "openclaw/plugin-sdk/reply-payload";
-import { stripReasoningTagsFromText } from "openclaw/plugin-sdk/text-runtime";
+import { stripReasoningTagsFromText } from "openclaw/plugin-sdk/text-chunking";
 import { resolveFeishuRuntimeAccount } from "./accounts.js";
 import { createFeishuClient } from "./client.js";
 import { sendMediaFeishu, shouldSuppressFeishuTextForVoiceMedia } from "./media.js";
@@ -147,6 +147,12 @@ export function createFeishuReplyDispatcher(params: CreateFeishuReplyDispatcherP
   const sendReplyToMessageId = skipReplyToInMessages ? undefined : replyToMessageId;
   const threadReplyMode = threadReply === true;
   const effectiveReplyInThread = threadReplyMode ? true : replyInThread;
+  const allowTopLevelReplyFallback =
+    effectiveReplyInThread === true &&
+    threadReplyMode &&
+    rootId !== undefined &&
+    sendReplyToMessageId !== undefined &&
+    sendReplyToMessageId !== rootId;
   const account = resolveFeishuRuntimeAccount({ cfg, accountId });
   const prefixContext = createReplyPrefixContext({ cfg, agentId });
 
@@ -244,7 +250,7 @@ export function createFeishuReplyDispatcher(params: CreateFeishuReplyDispatcherP
     if (!thinking) {
       return "";
     }
-    const withoutLabel = thinking.replace(/^Reasoning:\n/, "");
+    const withoutLabel = thinking.replace(/^(?:Reasoning:|Thinking\.{0,3})\s*/u, "");
     const plain = withoutLabel.replace(/^_(.*)_$/gm, "$1");
     const lines = plain.split("\n").map((line) => `> ${line}`);
     return `> 💭 **Thinking**\n${lines.join("\n")}`;
@@ -369,6 +375,18 @@ export function createFeishuReplyDispatcher(params: CreateFeishuReplyDispatcherP
     })();
   };
 
+  const resetStreamingState = () => {
+    streaming = null;
+    streamingStartPromise = null;
+    partialUpdateQueue = Promise.resolve();
+    streamText = "";
+    lastPartial = "";
+    reasoningText = "";
+    statusLine = "";
+    snapshotBaseText = "";
+    lastSnapshotTextLength = 0;
+  };
+
   const closeStreaming = async (options?: { markClosedForReply?: boolean }) => {
     try {
       if (streamingStartPromise) {
@@ -391,21 +409,31 @@ export function createFeishuReplyDispatcher(params: CreateFeishuReplyDispatcherP
         }
       }
     } finally {
-      streaming = null;
-      streamingStartPromise = null;
-      partialUpdateQueue = Promise.resolve();
-      streamText = "";
-      lastPartial = "";
-      reasoningText = "";
-      statusLine = "";
-      snapshotBaseText = "";
-      lastSnapshotTextLength = 0;
+      resetStreamingState();
     }
   };
 
-  const updateStreamingStatusLine = (nextStatusLine: string) => {
+  const discardStreamingPreview = async () => {
+    try {
+      if (streamingStartPromise) {
+        await streamingStartPromise;
+      }
+      await partialUpdateQueue;
+      if (streaming?.isActive()) {
+        await streaming.discard();
+      }
+    } finally {
+      resetStreamingState();
+    }
+  };
+
+  const updateStreamingStatusLine = (
+    nextStatusLine: string,
+    options?: { startIfNeeded?: boolean },
+  ) => {
     statusLine = nextStatusLine;
-    if (!streaming?.isActive() && !streamingStartPromise && renderMode !== "card") {
+    const hasStreamingSession = Boolean(streaming?.isActive() || streamingStartPromise);
+    if (!hasStreamingSession && (options?.startIfNeeded === false || renderMode !== "card")) {
       return;
     }
     startStreaming();
@@ -465,6 +493,7 @@ export function createFeishuReplyDispatcher(params: CreateFeishuReplyDispatcherP
                 text: chunk,
                 replyToMessageId: sendReplyToMessageId,
                 replyInThread: effectiveReplyInThread,
+                allowTopLevelReplyFallback,
                 accountId,
               });
             },
@@ -491,6 +520,7 @@ export function createFeishuReplyDispatcher(params: CreateFeishuReplyDispatcherP
                     text: chunk,
                     replyToMessageId: sendReplyToMessageId,
                     replyInThread: effectiveReplyInThread,
+                    allowTopLevelReplyFallback,
                     accountId,
                   });
                 },
@@ -528,9 +558,11 @@ export function createFeishuReplyDispatcher(params: CreateFeishuReplyDispatcherP
               ...(payload.audioAsVoice === true ? { audioAsVoice: true } : {}),
             }),
           );
+        const streamingCardEnabledForReplyKind = streamingEnabled && info?.kind === "final";
         const useCard =
           hasText &&
-          (renderMode === "card" ||
+          (streamingCardEnabledForReplyKind ||
+            renderMode === "card" ||
             (info?.kind === "block" && coreBlockStreamingEnabled && renderMode !== "raw") ||
             (renderMode === "auto" && shouldUseCard(text)));
         const skipTextForDuplicateFinal =
@@ -547,9 +579,17 @@ export function createFeishuReplyDispatcher(params: CreateFeishuReplyDispatcherP
           !hasVoiceMedia &&
           !skipTextForDuplicateFinal &&
           !skipTextForClosedStreamingFinal;
+        const shouldDiscardStreamingPreview =
+          info?.kind === "final" &&
+          hasMedia &&
+          ((hasVoiceMedia && !shouldDeliverText) || skipTextForDuplicateFinal);
 
         if (!shouldDeliverText && !hasMedia) {
           return;
+        }
+
+        if (shouldDiscardStreamingPreview) {
+          await discardStreamingPreview();
         }
 
         if (shouldDeliverText) {
@@ -572,7 +612,8 @@ export function createFeishuReplyDispatcher(params: CreateFeishuReplyDispatcherP
             }
           }
 
-          if (streaming?.isActive()) {
+          const shouldStreamText = info?.kind === "block" || info?.kind === "final";
+          if (streaming?.isActive() && shouldStreamText) {
             if (info?.kind === "block") {
               // Some runtimes emit block payloads without onPartial/final callbacks.
               // Mirror block text into streamText so onIdle close still sends content.
@@ -605,6 +646,7 @@ export function createFeishuReplyDispatcher(params: CreateFeishuReplyDispatcherP
                   text: chunk,
                   replyToMessageId: sendReplyToMessageId,
                   replyInThread: effectiveReplyInThread,
+                  allowTopLevelReplyFallback,
                   accountId,
                   header: cardHeader,
                   note: cardNote,
@@ -623,6 +665,7 @@ export function createFeishuReplyDispatcher(params: CreateFeishuReplyDispatcherP
                   text: chunk,
                   replyToMessageId: sendReplyToMessageId,
                   replyInThread: effectiveReplyInThread,
+                  allowTopLevelReplyFallback,
                   accountId,
                 });
               },
@@ -674,6 +717,7 @@ export function createFeishuReplyDispatcher(params: CreateFeishuReplyDispatcherP
             if (!cleaned) {
               return;
             }
+            startStreaming();
             queueStreamingUpdate(cleaned, {
               dedupeWithLastPartial: true,
               mode: "snapshot",
@@ -719,7 +763,7 @@ export function createFeishuReplyDispatcher(params: CreateFeishuReplyDispatcherP
         : undefined,
       onAssistantMessageStart: streamingEnabled
         ? () => {
-            updateStreamingStatusLine("");
+            updateStreamingStatusLine("", { startIfNeeded: false });
           }
         : undefined,
       onCompactionStart: streamingEnabled

@@ -144,20 +144,82 @@ describe("mattermost monitor authz", () => {
   it("denies group control commands when the sender is outside the allowlist", async () => {
     const decision = await authorizeGroupCommand("attacker");
 
-    expect(decision).toMatchObject({
+    expect(decision).toEqual({
       ok: false,
       denyReason: "unauthorized",
+      commandAuthorized: false,
+      channelInfo: {
+        id: "chan-1",
+        type: "O",
+        name: "general",
+        display_name: "General",
+      },
       kind: "channel",
+      chatType: "channel",
+      channelName: "general",
+      channelDisplay: "General",
+      roomLabel: "#general",
     });
   });
 
   it("authorizes group control commands for allowlisted senders", async () => {
     const decision = await authorizeGroupCommand("trusted-user");
 
-    expect(decision).toMatchObject({
+    expect(decision).toEqual({
       ok: true,
       commandAuthorized: true,
+      channelInfo: {
+        id: "chan-1",
+        type: "O",
+        name: "general",
+        display_name: "General",
+      },
       kind: "channel",
+      chatType: "channel",
+      channelName: "general",
+      channelDisplay: "General",
+      roomLabel: "#general",
+    });
+  });
+
+  it("denies command invocations when channel type is unavailable", async () => {
+    const decision = await authorizeMattermostCommandInvocation({
+      account: {
+        ...accountFixture,
+        config: {
+          dmPolicy: "allowlist",
+          groupPolicy: "open",
+          allowFrom: ["trusted-user"],
+        },
+      },
+      cfg: {},
+      senderId: "new-user",
+      senderName: "New User",
+      channelId: "dm-1",
+      channelInfo: {
+        id: "dm-1",
+        name: "",
+        display_name: "",
+      },
+      storeAllowFrom: [],
+      allowTextCommands: true,
+      hasControlCommand: true,
+    });
+
+    expect(decision).toEqual({
+      ok: false,
+      denyReason: "unknown-channel",
+      commandAuthorized: false,
+      channelInfo: {
+        id: "dm-1",
+        name: "",
+        display_name: "",
+      },
+      kind: "channel",
+      chatType: "channel",
+      channelName: "",
+      channelDisplay: "",
+      roomLabel: "#dm-1",
     });
   });
 
@@ -197,10 +259,20 @@ describe("mattermost monitor authz", () => {
       hasControlCommand: true,
     });
 
-    expect(decision).toMatchObject({
+    expect(decision).toEqual({
       ok: true,
       commandAuthorized: true,
+      channelInfo: {
+        id: "chan-1",
+        type: "O",
+        name: "general",
+        display_name: "General",
+      },
       kind: "channel",
+      chatType: "channel",
+      channelName: "general",
+      channelDisplay: "General",
+      roomLabel: "#general",
     });
   });
 

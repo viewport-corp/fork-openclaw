@@ -1,3 +1,9 @@
+/**
+ * @deprecated Public SDK subpath has no bundled extension production imports.
+ * Use channel ingress/runtime authorization helpers or command-status helpers
+ * instead of this broad compatibility surface.
+ */
+
 import {
   buildCommandsMessage as buildCommandsMessageCompat,
   buildCommandsMessagePaginated as buildCommandsMessagePaginatedCompat,
@@ -26,7 +32,7 @@ export {
   resolveInboundDirectDmAccessWithRuntime,
   type DirectDmCommandAuthorizationRuntime,
   type ResolvedInboundDirectDmAccess,
-} from "./direct-dm.js";
+} from "../channels/direct-dm-access.js";
 
 export {
   hasControlCommand,
@@ -91,9 +97,9 @@ export {
   listSkillCommandsForAgents,
   listSkillCommandsForWorkspace,
   resolveSkillCommandInvocation,
-} from "../auto-reply/skill-commands.js";
+} from "../skills/discovery/chat-commands.js";
 export { getPluginCommandSpecs, listProviderPluginCommandSpecs } from "../plugins/command-specs.js";
-export type { SkillCommandSpec } from "../agents/skills.js";
+export type { SkillCommandSpec } from "../skills/types.js";
 export {
   buildModelsProviderData,
   formatModelsAvailableHeader,

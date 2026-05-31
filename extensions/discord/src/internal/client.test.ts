@@ -34,9 +34,9 @@ function createTestCommand(params: {
 }): BaseCommand {
   return new (class extends BaseCommand {
     name = params.name;
-    description = `${params.name} command`;
+    override description = `${params.name} command`;
     type = ApplicationCommandType.ChatInput;
-    guildIds = params.guildIds;
+    override guildIds = params.guildIds;
     serializeOptions() {
       return params.options;
     }
@@ -57,7 +57,7 @@ describe("ComponentRegistry", () => {
     class WildcardButton extends Button {
       label = "button";
       customId = "__button_wildcard__";
-      customIdParser = (id: string) =>
+      override customIdParser = (id: string) =>
         id === this.customId || id.startsWith("occomp:")
           ? { key: "*", data: {} }
           : parseCustomId(id);
@@ -65,7 +65,7 @@ describe("ComponentRegistry", () => {
     class WildcardSelect extends StringSelectMenu {
       customId = "__select_wildcard__";
       options = [];
-      customIdParser = (id: string) =>
+      override customIdParser = (id: string) =>
         id === this.customId || id.startsWith("occomp:")
           ? { key: "*", data: {} }
           : parseCustomId(id);
@@ -89,7 +89,7 @@ describe("ComponentRegistry", () => {
     class EncodedButton extends Button {
       label = "button";
       customId = "encoded:seed=one";
-      customIdParser = (id: string) => ({
+      override customIdParser = (id: string) => ({
         key: id.startsWith("encoded:") ? "encoded" : parseCustomId(id).key,
         data: {},
       });
@@ -116,7 +116,24 @@ describe("Client.deployCommands", () => {
     await client.deployCommands({ mode: "overwrite" });
 
     expect(put).toHaveBeenCalledWith(Routes.applicationGuildCommands("app1", "g1"), {
-      body: [expect.objectContaining({ name: "one" }), expect.objectContaining({ name: "two" })],
+      body: [
+        {
+          name: "one",
+          description: "one command",
+          type: ApplicationCommandType.ChatInput,
+          integration_types: [0, 1],
+          contexts: [0, 1, 2],
+          default_member_permissions: null,
+        },
+        {
+          name: "two",
+          description: "two command",
+          type: ApplicationCommandType.ChatInput,
+          integration_types: [0, 1],
+          contexts: [0, 1, 2],
+          default_member_permissions: null,
+        },
+      ],
     });
     expect(put).toHaveBeenCalledTimes(2);
   });
@@ -247,19 +264,25 @@ describe("Client.deployCommands", () => {
 
     await client.deployCommands({ mode: "reconcile" });
 
-    expect(patch).toHaveBeenCalledWith(
-      Routes.applicationCommand("app1", "cmd1"),
-      expect.objectContaining({
-        body: expect.objectContaining({
-          options: [
-            expect.objectContaining({
-              name_localizations: { de: "wert" },
-              description_localizations: { de: "Wert" },
-            }),
-          ],
-        }),
-      }),
-    );
+    expect(patch).toHaveBeenCalledWith(Routes.applicationCommand("app1", "cmd1"), {
+      body: {
+        name: "one",
+        description: "one command",
+        type: ApplicationCommandType.ChatInput,
+        options: [
+          {
+            type: 3,
+            name: "value",
+            name_localizations: { de: "wert" },
+            description: "Value",
+            description_localizations: { de: "Wert" },
+          },
+        ],
+        integration_types: [0, 1],
+        contexts: [0, 1, 2],
+        default_member_permissions: null,
+      },
+    });
     expect(post).not.toHaveBeenCalled();
     expect(deleteRequest).not.toHaveBeenCalled();
   });
@@ -319,6 +342,47 @@ describe("Client.deployCommands", () => {
     await client.fetchChannel("c1");
     expect(get).toHaveBeenCalledTimes(2);
   });
+
+  it("does not reuse cached REST objects while the process clock is invalid", async () => {
+    const client = createInternalTestClient();
+    const get = vi
+      .fn()
+      .mockResolvedValueOnce({ id: "c1", type: 0, name: "old" })
+      .mockResolvedValueOnce({ id: "c1", type: 0, name: "fresh" })
+      .mockResolvedValueOnce({ id: "c1", type: 0, name: "recovered" });
+    attachRestMock(client, { get });
+
+    const first = await client.fetchChannel("c1");
+    expect(first.name).toBe("old");
+
+    vi.spyOn(Date, "now").mockReturnValue(8_640_000_000_000_001);
+    const second = await client.fetchChannel("c1");
+
+    expect(second.name).toBe("fresh");
+
+    vi.mocked(Date.now).mockReturnValue(1_000);
+    const third = await client.fetchChannel("c1");
+
+    expect(third.name).toBe("recovered");
+    expect(get).toHaveBeenCalledTimes(3);
+  });
+
+  it("does not cache REST objects when the cache expiry would exceed the Date range", async () => {
+    const client = createInternalTestClient();
+    const get = vi
+      .fn()
+      .mockResolvedValueOnce({ id: "c1", type: 0, name: "first" })
+      .mockResolvedValueOnce({ id: "c1", type: 0, name: "second" });
+    attachRestMock(client, { get });
+    vi.spyOn(Date, "now").mockReturnValue(8_640_000_000_000_000);
+
+    const first = await client.fetchChannel("c1");
+    const second = await client.fetchChannel("c1");
+
+    expect(first.name).toBe("first");
+    expect(second.name).toBe("second");
+    expect(get).toHaveBeenCalledTimes(2);
+  });
 });
 
 describe("Client gateway event queue", () => {
@@ -344,12 +408,15 @@ describe("Client gateway event queue", () => {
       eventQueue: {},
     });
 
-    expect(client.getRuntimeMetrics().eventQueue).toEqual(
-      expect.objectContaining({
-        maxQueueSize: 10_000,
-        maxConcurrency: 50,
-      }),
-    );
+    expect(client.getRuntimeMetrics().eventQueue).toEqual({
+      queueSize: 0,
+      processing: 0,
+      processed: 0,
+      dropped: 0,
+      timeouts: 0,
+      maxQueueSize: 10_000,
+      maxConcurrency: 50,
+    });
   });
 
   it("times out hung queued listeners", async () => {
@@ -371,9 +438,15 @@ describe("Client gateway event queue", () => {
     expect(errorSpy).toHaveBeenCalledWith(
       "[EventQueue] Listener Object timed out after 10ms for event READY",
     );
-    expect(client.getRuntimeMetrics().eventQueue).toEqual(
-      expect.objectContaining({ processed: 1, timeouts: 1 }),
-    );
+    expect(client.getRuntimeMetrics().eventQueue).toEqual({
+      queueSize: 0,
+      processing: 0,
+      processed: 1,
+      dropped: 0,
+      timeouts: 1,
+      maxQueueSize: 10_000,
+      maxConcurrency: 1,
+    });
   });
 
   it("limits queued listener concurrency", async () => {

@@ -24,7 +24,7 @@ vi.mock("../plugins/provider-hook-runtime.js", async () => {
           "mistral",
           "moonshot",
           "openai",
-          "openai-codex",
+          "openai",
           "opencode",
           "opencode-go",
           "ollama",
@@ -132,7 +132,6 @@ vi.mock("../plugins/provider-hook-runtime.js", async () => {
                 toolCallIdMode: "strict9",
               };
             case "openai":
-            case "openai-codex":
               return {
                 sanitizeMode: "images-only",
                 sanitizeToolCallIds: context?.modelApi === "openai-completions",
@@ -361,6 +360,26 @@ describe("resolveTranscriptPolicy", () => {
     });
     expect(responsesPolicy.dropReasoningFromHistory).toBe(false);
   });
+
+  it.each([
+    "kimi-for-coding",
+    "moonshotai/kimi-k2.6",
+    "kimi-k2-thinking",
+    "hf:moonshotai/kimi-k2-thinking",
+    "xiaomi/mimo-v2.6-pro",
+    "xiaomi/mimo-v2.6-pro:cloud",
+  ])(
+    "preserves historical reasoning for %s replay-required OpenAI-compatible models",
+    (modelId) => {
+      const policy = resolveTranscriptPolicy({
+        provider: "custom-openai-proxy",
+        modelId,
+        modelApi: "openai-completions",
+      });
+
+      expect(policy.dropReasoningFromHistory).toBe(false);
+    },
+  );
 
   it("falls back to unowned transport defaults when no owning plugin exists", () => {
     expectStrictOpenAiCompatibleReplayDefaults("custom-openai-proxy");
@@ -596,6 +615,24 @@ describe("resolveTranscriptPolicy", () => {
       }),
     ).toBe(true);
   });
+
+  it.each(["anthropic", "amazon-bedrock"] as const)(
+    "allows provider-owned thinking replay for signed-thinking %s recovery policies",
+    (provider) => {
+      expect(
+        shouldAllowProviderOwnedThinkingReplay({
+          provider,
+          modelApi:
+            provider === "amazon-bedrock" ? "bedrock-converse-stream" : "anthropic-messages",
+          policy: {
+            validateAnthropicTurns: true,
+            preserveSignatures: false,
+            dropThinkingBlocks: false,
+          },
+        }),
+      ).toBe(true);
+    },
+  );
 
   it("does not allow immutable provider-owned thinking replay for github-copilot claude models", () => {
     const policy = resolveTranscriptPolicy({

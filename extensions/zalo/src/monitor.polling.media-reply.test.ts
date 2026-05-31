@@ -23,6 +23,7 @@ import {
 } from "./test-support/monitor-mocks-test-support.js";
 
 const prepareHostedZaloMediaUrlMock = vi.fn();
+const ZALO_OUTBOUND_MEDIA_DIR_NAME = "openclaw-zalo-outbound-media";
 
 vi.mock("./outbound-media.js", async () => {
   const actual = await vi.importActual<typeof import("./outbound-media.js")>("./outbound-media.js");
@@ -34,9 +35,14 @@ vi.mock("./outbound-media.js", async () => {
 
 import { clearHostedZaloMediaForTest } from "./outbound-media.js";
 
+function resolveHostedZaloMediaDirName(): string {
+  const workerId = process.env.VITEST_WORKER_ID ?? process.env.VITEST_POOL_ID;
+  return workerId ? `${ZALO_OUTBOUND_MEDIA_DIR_NAME}-${workerId}` : ZALO_OUTBOUND_MEDIA_DIR_NAME;
+}
+
 const ZALO_OUTBOUND_MEDIA_DIR = join(
   resolvePreferredOpenClawTmpDir(),
-  "openclaw-zalo-outbound-media",
+  resolveHostedZaloMediaDirName(),
 );
 
 async function writeHostedZaloMediaFixture(params: {
@@ -295,12 +301,10 @@ describe("Zalo polling media replies", () => {
       );
       expect(firstHostedMediaRoutes).toHaveLength(1);
       const hostedMediaRoute = firstHostedMediaRoutes[0];
-      expect(hostedMediaRoute).toEqual(
-        expect.objectContaining({
-          path: "/hooks/zalo/media",
-          pluginId: "zalo",
-        }),
-      );
+      expect(hostedMediaRoute?.path).toBe("/hooks/zalo/media");
+      expect(hostedMediaRoute?.pluginId).toBe("zalo");
+      expect(hostedMediaRoute?.source).toBe("zalo-hosted-media");
+      expect(hostedMediaRoute?.handler).toBeTypeOf("function");
 
       const secondRuntime = createRuntimeEnv();
       const secondSetup = createLifecycleMonitorSetup({

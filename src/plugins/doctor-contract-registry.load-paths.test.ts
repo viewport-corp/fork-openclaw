@@ -72,8 +72,8 @@ module.exports = {
     const entry = isRecord(entries[pluginId]) ? { ...entries[pluginId] } : {};
     const llm = isRecord(entry.llm) ? { ...entry.llm } : {};
     const allowedModels = Array.isArray(llm.allowedModels) ? [...llm.allowedModels] : [];
-    if (!allowedModels.includes("openai-codex/gpt-5.4-mini")) {
-      allowedModels.push("openai-codex/gpt-5.4-mini");
+    if (!allowedModels.includes("openai/gpt-5.4-mini")) {
+      allowedModels.push("openai/gpt-5.4-mini");
     }
     root.plugins = plugins;
     plugins.entries = entries;
@@ -207,11 +207,10 @@ describe("doctor contract registry load-path plugins", () => {
     const llm = readPluginLlmPolicy(result.config, pluginId);
 
     expect(result.changes).toEqual(["configured load-path doctor contract LLM policy"]);
-    expect(llm).toMatchObject({
+    expect(llm).toEqual({
       allowModelOverride: true,
-      allowedModels: ["openai-codex/gpt-5.4-mini"],
+      allowedModels: ["openai/gpt-5.4-mini"],
     });
-    expect(llm).not.toHaveProperty("allowAgentIdOverride");
   });
 
   it("discovers session route-state owners from plugins.load.paths", () => {

@@ -1,3 +1,4 @@
+import { normalizeLowercaseStringOrEmpty } from "../../packages/normalization-core/src/string-coerce.js";
 import type { ResolvedConfiguredAcpBinding } from "../acp/persistent-bindings.types.js";
 import { buildChatChannelMetaById } from "../channels/chat-meta-shared.js";
 import type { ChatChannelId } from "../channels/ids.js";
@@ -30,13 +31,15 @@ import { resolveBundledPluginsDir } from "../plugins/bundled-dir.js";
 import type { PluginRuntime } from "../plugins/runtime/types.js";
 import type { OpenClawPluginApi } from "../plugins/types.js";
 import { resolveThreadSessionKeys } from "../routing/session-key.js";
-import { parseThreadSessionSuffix } from "../sessions/session-key-utils.js";
 import {
-  normalizeLowercaseStringOrEmpty,
-  normalizeOptionalLowercaseString,
-} from "../shared/string-coerce.js";
+  normalizeSessionKeyPreservingOpaquePeerIds,
+  parseThreadSessionSuffix,
+} from "../sessions/session-key-utils.js";
 
 export type {
+  AgentPromptGuidance,
+  AgentPromptGuidanceEntry,
+  AgentPromptSurfaceKind,
   AgentHarness,
   AnyAgentTool,
   MediaUnderstandingProviderPlugin,
@@ -48,6 +51,8 @@ export type {
   OpenClawPluginServiceContext,
   PluginCommandContext,
   PluginCommandResult,
+  PluginAgentEventEmitParams,
+  PluginAgentEventEmitResult,
   PluginAgentEventSubscriptionRegistration,
   PluginAgentTurnPrepareEvent,
   PluginAgentTurnPrepareResult,
@@ -61,8 +66,16 @@ export type {
   PluginRunContextGetParams,
   PluginRunContextPatch,
   PluginRuntimeLifecycleRegistration,
+  PluginSessionActionContext,
+  PluginSessionActionRegistration,
+  PluginSessionActionResult,
+  PluginSessionAttachmentParams,
+  PluginSessionAttachmentResult,
   PluginSessionSchedulerJobHandle,
   PluginSessionSchedulerJobRegistration,
+  PluginSessionTurnScheduleParams,
+  PluginSessionTurnUnscheduleByTagParams,
+  PluginSessionTurnUnscheduleByTagResult,
   PluginSessionExtensionRegistration,
   PluginSessionExtensionProjection,
   PluginToolMetadataRegistration,
@@ -119,22 +132,30 @@ export type {
   UnifiedModelCatalogEntry,
   UnifiedModelCatalogKind,
   UnifiedModelCatalogSource,
-} from "../model-catalog/types.js";
+} from "@openclaw/model-catalog-core/model-catalog-types";
 export type { ProviderRuntimeModel } from "../plugins/provider-runtime-model.types.js";
-export type { OpenClawPluginToolContext, OpenClawPluginToolFactory } from "../plugins/types.js";
+export type {
+  OpenClawPluginActiveModelContext,
+  OpenClawPluginToolContext,
+  OpenClawPluginToolFactory,
+} from "../plugins/types.js";
 export type {
   MemoryPluginCapability,
   MemoryPluginPublicArtifact,
   MemoryPluginPublicArtifactsProvider,
 } from "../plugins/memory-state.js";
 export type {
+  PluginHookReplyPayloadSendingContext,
+  PluginHookReplyPayloadSendingEvent,
+  PluginHookReplyPayloadSendingResult,
+  PluginHookReplyPayload,
   PluginHookReplyDispatchContext,
   PluginHookReplyDispatchEvent,
   PluginHookReplyDispatchResult,
 } from "../plugins/types.js";
 export type { OpenClawConfig } from "../config/config.js";
 export type { OutboundIdentity } from "../infra/outbound/identity.js";
-export type { HistoryEntry } from "../auto-reply/reply/history.js";
+export type { HistoryEntry } from "../auto-reply/reply/history.types.js";
 export type { ReplyPayload } from "./reply-payload.js";
 export type { AllowlistMatch } from "../channels/allowlist-match.js";
 export type {
@@ -236,7 +257,10 @@ export { resolveGatewayBindUrl } from "../shared/gateway-bind-url.js";
 export type { GatewayBindUrlResult } from "../shared/gateway-bind-url.js";
 export { resolveGatewayPort } from "../config/paths.js";
 export { createSubsystemLogger } from "../logging/subsystem.js";
-export { normalizeAtHashSlug, normalizeHyphenSlug } from "../shared/string-normalization.js";
+export {
+  normalizeAtHashSlug,
+  normalizeHyphenSlug,
+} from "../../packages/normalization-core/src/string-normalization.js";
 export { createActionGate } from "../agents/tools/common.js";
 export {
   jsonResult,
@@ -367,8 +391,8 @@ export function recoverCurrentThreadSessionId(params: {
     return undefined;
   }
   if (
-    normalizeOptionalLowercaseString(current.baseSessionKey) !==
-    normalizeOptionalLowercaseString(params.route.baseSessionKey)
+    normalizeSessionKeyPreservingOpaquePeerIds(current.baseSessionKey) !==
+    normalizeSessionKeyPreservingOpaquePeerIds(params.route.baseSessionKey)
   ) {
     return undefined;
   }
@@ -474,6 +498,7 @@ type CreateChannelPluginBaseOptions<TResolvedAccount> = {
   streaming?: ChannelPlugin<TResolvedAccount>["streaming"];
   reload?: ChannelPlugin<TResolvedAccount>["reload"];
   gatewayMethods?: ChannelPlugin<TResolvedAccount>["gatewayMethods"];
+  gatewayMethodDescriptors?: ChannelPlugin<TResolvedAccount>["gatewayMethodDescriptors"];
   configSchema?: ChannelPlugin<TResolvedAccount>["configSchema"];
   config?: ChannelPlugin<TResolvedAccount>["config"];
   security?: ChannelPlugin<TResolvedAccount>["security"];
@@ -496,6 +521,7 @@ type CreatedChannelPluginBase<TResolvedAccount> = Pick<
       | "streaming"
       | "reload"
       | "gatewayMethods"
+      | "gatewayMethodDescriptors"
       | "configSchema"
       | "config"
       | "security"
@@ -808,6 +834,9 @@ export function createChannelPluginBase<TResolvedAccount>(
     ...(params.streaming ? { streaming: params.streaming } : {}),
     ...(params.reload ? { reload: params.reload } : {}),
     ...(params.gatewayMethods ? { gatewayMethods: params.gatewayMethods } : {}),
+    ...(params.gatewayMethodDescriptors
+      ? { gatewayMethodDescriptors: params.gatewayMethodDescriptors }
+      : {}),
     ...(params.configSchema ? { configSchema: params.configSchema } : {}),
     ...(params.config ? { config: params.config } : {}),
     ...(params.security ? { security: params.security } : {}),

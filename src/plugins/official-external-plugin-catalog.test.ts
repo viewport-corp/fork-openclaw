@@ -24,11 +24,11 @@ describe("official external plugin catalog", () => {
     expect(resolveOfficialExternalPluginId(wecomByChannel)).toBe("wecom-openclaw-plugin");
     expect(resolveOfficialExternalPluginId(wecomByPlugin)).toBe("wecom-openclaw-plugin");
     expect(resolveOfficialExternalPluginInstall(wecomByChannel)?.npmSpec).toBe(
-      "@wecom/wecom-openclaw-plugin@2026.4.23",
+      "@wecom/wecom-openclaw-plugin@2026.5.7",
     );
     expect(resolveOfficialExternalPluginId(yuanbaoByChannel)).toBe("openclaw-plugin-yuanbao");
     expect(resolveOfficialExternalPluginInstall(yuanbaoByChannel)?.npmSpec).toBe(
-      "openclaw-plugin-yuanbao@2.13.0",
+      "openclaw-plugin-yuanbao@2.13.1",
     );
   });
 
@@ -42,6 +42,29 @@ describe("official external plugin catalog", () => {
     expect(resolveOfficialExternalPluginInstall(expectCatalogEntry("line"))?.npmSpec).toBe(
       "@openclaw/line",
     );
+    expect(resolveOfficialExternalPluginInstall(expectCatalogEntry("diffs-language-pack"))).toEqual(
+      {
+        npmSpec: "@openclaw/diffs-language-pack",
+        clawhubSpec: "clawhub:@openclaw/diffs-language-pack",
+        defaultChoice: "npm",
+        minHostVersion: ">=2026.5.27",
+      },
+    );
+  });
+
+  it("allows invalid-config recovery for externalized stock plugins", () => {
+    expect(resolveOfficialExternalPluginInstall(expectCatalogEntry("brave"))).toMatchObject({
+      npmSpec: "@openclaw/brave-plugin",
+      allowInvalidConfigRecovery: true,
+    });
+    expect(resolveOfficialExternalPluginInstall(expectCatalogEntry("slack"))).toMatchObject({
+      npmSpec: "@openclaw/slack",
+      allowInvalidConfigRecovery: true,
+    });
+    expect(resolveOfficialExternalPluginInstall(expectCatalogEntry("discord"))).toMatchObject({
+      npmSpec: "@openclaw/discord",
+      allowInvalidConfigRecovery: true,
+    });
   });
 
   it("lists Matrix as an official external ClawHub channel after cutover", () => {
@@ -55,12 +78,12 @@ describe("official external plugin catalog", () => {
 
     expect(ids.has("matrix")).toBe(true);
     expect(ids.has("mattermost")).toBe(false);
-    expect(resolveOfficialExternalPluginInstall(expectCatalogEntry("matrix"))).toEqual(
-      expect.objectContaining({
-        clawhubSpec: "clawhub:@openclaw/matrix",
-        npmSpec: "@openclaw/matrix",
-        defaultChoice: "clawhub",
-      }),
-    );
+    expect(resolveOfficialExternalPluginInstall(expectCatalogEntry("matrix"))).toEqual({
+      clawhubSpec: "clawhub:@openclaw/matrix",
+      npmSpec: "@openclaw/matrix",
+      defaultChoice: "clawhub",
+      minHostVersion: ">=2026.4.10",
+      allowInvalidConfigRecovery: true,
+    });
   });
 });

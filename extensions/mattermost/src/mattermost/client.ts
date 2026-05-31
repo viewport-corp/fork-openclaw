@@ -1,3 +1,4 @@
+import { resolveTimerTimeoutMs } from "openclaw/plugin-sdk/number-runtime";
 import { sleep } from "openclaw/plugin-sdk/runtime-env";
 import {
   fetchWithSsrFGuard,
@@ -6,8 +7,8 @@ import {
 import {
   normalizeLowercaseStringOrEmpty,
   normalizeOptionalString,
-} from "openclaw/plugin-sdk/text-runtime";
-import { z } from "openclaw/plugin-sdk/zod";
+} from "openclaw/plugin-sdk/string-coerce-runtime";
+import { z } from "zod";
 
 export type MattermostFetch = (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>;
 
@@ -296,9 +297,10 @@ export async function createMattermostDirectChannelWithRetry(
     maxRetries = 3,
     initialDelayMs = 1000,
     maxDelayMs = 10000,
-    timeoutMs = 30000,
+    timeoutMs: rawTimeoutMs = 30000,
     onRetry,
   } = options;
+  const timeoutMs = resolveTimerTimeoutMs(rawTimeoutMs, 30000);
 
   let lastError: Error | undefined;
 
