@@ -9,6 +9,7 @@ import type {
   ReplyToMode,
   SessionThreadBindingsConfig,
 } from "./types.base.js";
+import type { ChannelBotLoopProtectionConfig } from "./types.bot-loop-protection.js";
 import type {
   ChannelHealthMonitorConfig,
   ChannelHeartbeatVisibilityConfig,
@@ -152,6 +153,19 @@ export type TelegramAccountConfig = {
    * - "allowlist": only allow group messages from senders in groupAllowFrom/allowFrom
    */
   groupPolicy?: GroupPolicy;
+  /**
+   * Process inbound messages authored by other bots (Telegram Bot API 10.0
+   * bot-to-bot mode). Default: true — Telegram only delivers bot messages
+   * after Bot-to-Bot Communication Mode is enabled in BotFather, and bot
+   * senders still pass the regular allowFrom/group gating. Set false to drop
+   * all bot-authored messages.
+   */
+  allowBots?: boolean;
+  /**
+   * Sliding-window guard that suppresses runaway two-bot exchanges. Default on
+   * whenever bot-authored messages reach dispatch. See #58789 / #79077.
+   */
+  botLoopProtection?: ChannelBotLoopProtectionConfig;
   /** Supplemental context visibility policy (all|allowlist|allowlist_quote). */
   contextVisibility?: ContextVisibilityMode;
   /** Max group messages to keep as history context (0 disables). */
