@@ -17,6 +17,30 @@ export const telegramChannelConfigUiHints = {
     label: "Telegram DM Policy",
     help: 'Direct message access control ("pairing" recommended). "open" requires channels.telegram.allowFrom=["*"].',
   },
+  allowBots: {
+    label: "Telegram Allow Bot Messages",
+    help: "Process inbound messages authored by other bots (Bot API 10.0 bot-to-bot mode; default: true). Bot senders still pass allowFrom/group gating. Set false to drop all bot-authored messages.",
+  },
+  botLoopProtection: {
+    label: "Telegram Bot Loop Protection",
+    help: "Sliding-window guard for bot-to-bot Telegram loops. Default is enabled whenever allowBots lets bot-authored messages reach dispatch.",
+  },
+  "botLoopProtection.enabled": {
+    label: "Telegram Bot Loop Protection Enabled",
+    help: "Enable the bot-pair loop guard. Defaults to true when bot-authored messages are processed.",
+  },
+  "botLoopProtection.maxEventsPerWindow": {
+    label: "Telegram Bot Pair Events Per Window",
+    help: "Maximum messages a single Telegram bot pair may exchange in the configured window before suppression starts. Default: 20.",
+  },
+  "botLoopProtection.windowSeconds": {
+    label: "Telegram Bot Loop Window Seconds",
+    help: "Sliding window length in seconds for Telegram bot-pair loop budgets. Default: 60.",
+  },
+  "botLoopProtection.cooldownSeconds": {
+    label: "Telegram Bot Loop Cooldown Seconds",
+    help: "Seconds to suppress a Telegram bot pair after it exceeds the loop budget. Default: 60.",
+  },
   configWrites: {
     label: "Telegram Config Writes",
     help: "Allow Telegram to write config in response to channel events/commands (default: true).",

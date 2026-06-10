@@ -61,6 +61,7 @@ import { resolveTelegramConfigReasoningDefault } from "./agent-config.js";
 import { withTelegramApiErrorLogging } from "./api-logging.js";
 import { normalizeAllowFrom } from "./bot-access.js";
 import type { TelegramBotDeps } from "./bot-deps.js";
+import { resolveTelegramBotLoopProtection } from "./bot-loop-protection.js";
 import type { TelegramMessageContext } from "./bot-message-context.js";
 import {
   findModelInCatalog,
@@ -1659,6 +1660,14 @@ export const dispatchTelegramMessage = async ({
             ctxPayload,
             recordInboundSession: dispatchContext.turn.recordInboundSession,
             record: dispatchContext.turn.record,
+            botLoopProtection: resolveTelegramBotLoopProtection({
+              msg,
+              accountId: route.accountId,
+              chatId,
+              selfBotId: context.primaryCtx.me?.id,
+              telegramCfg,
+              defaultsConfig: cfg.channels?.defaults?.botLoopProtection,
+            }),
             runDispatch: () => {
               const sentBlockMediaUrls = new Set<string>();
 

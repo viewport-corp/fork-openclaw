@@ -271,6 +271,13 @@ export const TelegramAccountSchemaBase = z
     defaultTo: z.union([z.string(), z.number()]).optional(),
     groupAllowFrom: z.array(z.union([z.string(), z.number()])).optional(),
     groupPolicy: GroupPolicySchema.optional().default("allowlist"),
+    allowBots: z
+      .boolean()
+      .optional()
+      .describe(
+        "Process inbound messages authored by other bots (Telegram Bot API 10.0 bot-to-bot mode). Default: true — Telegram only delivers bot messages after Bot-to-Bot Communication Mode is enabled in BotFather, and bot senders still pass the regular allowFrom/group gating. Set false to drop all bot-authored messages.",
+      ),
+    botLoopProtection: BotLoopProtectionSchema.optional(),
     contextVisibility: ContextVisibilityModeSchema.optional(),
     historyLimit: z.number().int().min(0).optional(),
     dmHistoryLimit: z.number().int().min(0).optional(),
