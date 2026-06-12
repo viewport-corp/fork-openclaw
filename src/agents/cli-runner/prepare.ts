@@ -1,3 +1,7 @@
+/**
+ * Prepares CLI backend run context: backend config, prompts, bootstrap context,
+ * MCP, auth epoch, and reusable session metadata.
+ */
 import { uniqueStrings } from "@openclaw/normalization-core/string-normalization";
 import { getRuntimeConfig } from "../../config/config.js";
 import {
@@ -22,6 +26,7 @@ import { buildAgentHookContextChannelFields } from "../../plugins/hook-agent-con
 import { getGlobalHookRunner } from "../../plugins/hook-runner-global.js";
 import { annotateInterSessionPromptText } from "../../sessions/input-provenance.js";
 import { resolveSkillsPromptForRun } from "../../skills/loading/workspace.js";
+import { resolveEmbeddedRunSkillEntries } from "../../skills/runtime/embedded-run-entries.js";
 import { resolveUserPath } from "../../utils.js";
 import { resolveAgentDir, resolveSessionAgentIds } from "../agent-scope.js";
 import { externalCliDiscoveryForProviderAuth } from "../auth-profiles/external-cli-discovery.js";
@@ -53,13 +58,22 @@ import {
   resolveBootstrapTotalMaxChars,
 } from "../embedded-agent-helpers.js";
 import { resolvePromptBuildHookResult } from "../embedded-agent-runner/run/attempt.prompt-helpers.js";
-import { resolveAttemptPrependSystemContext } from "../embedded-agent-runner/run/attempt.prompt-helpers.js";
+import {
+  prependSystemPromptAddition,
+  resolveAttemptMediaTaskSystemPromptAddition,
+} from "../embedded-agent-runner/run/attempt.prompt-helpers.js";
 import { composeSystemPromptWithHookContext } from "../embedded-agent-runner/run/attempt.thread-helpers.js";
 import { buildCurrentInboundPrompt } from "../embedded-agent-runner/run/runtime-context-prompt.js";
+import {
+  mapSandboxSkillEntriesForPrompt,
+  resolveSandboxSkillRuntimeInputs,
+} from "../embedded-agent-runner/sandbox-skills.js";
 import { resolveHeartbeatPromptForSystemPrompt } from "../heartbeat-system-prompt.js";
 import { applyPluginTextReplacements } from "../plugin-text-transforms.js";
+import { ensureSandboxWorkspaceForSession } from "../sandbox.js";
+import { ensureSystemPromptCacheBoundary } from "../system-prompt-cache-boundary.js";
 import { buildSystemPromptReport } from "../system-prompt-report.js";
-import { appendModelIdentitySystemPrompt } from "../system-prompt.js";
+import { appendModelIdentitySystemPrompt, buildModelIdentityPromptLine } from "../system-prompt.js";
 import { redactRunIdentifier, resolveRunWorkspaceDir } from "../workspace-run.js";
 import { prepareCliBundleMcpConfig } from "./bundle-mcp.js";
 import { prepareClaudeCliSkillsPlugin } from "./claude-skills-plugin.js";
@@ -90,6 +104,75 @@ const prepareDeps = {
   claudeCliSessionTranscriptHasOrphanedToolUse,
 };
 
+async function resolveCliSkillsPrompt(params: {
+  agentId: string;
+  config: RunCliAgentParams["config"];
+  sessionKey: string;
+  skillsSnapshot: RunCliAgentParams["skillsSnapshot"];
+  workspaceDir: string;
+}): Promise<string> {
+  const sandboxWorkspace = await ensureSandboxWorkspaceForSession({
+    config: params.config,
+    sessionKey: params.sessionKey,
+    workspaceDir: params.workspaceDir,
+  });
+  if (!sandboxWorkspace) {
+    return resolveSkillsPromptForRun({
+      skillsSnapshot: params.skillsSnapshot,
+      workspaceDir: params.workspaceDir,
+      config: params.config,
+      agentId: params.agentId,
+    });
+  }
+
+  const {
+    skillsEligibility,
+    skillsPromptWorkspaceDir,
+    skillsSnapshot: skillsSnapshotForRun,
+    skillsWorkspaceDir,
+    workspaceOnly,
+  } = resolveSandboxSkillRuntimeInputs({
+    sandbox: {
+      enabled: true,
+      ...(sandboxWorkspace.containerWorkdir
+        ? { containerWorkdir: sandboxWorkspace.containerWorkdir }
+        : {}),
+      ...(sandboxWorkspace.skillsEligibility
+        ? { skillsEligibility: sandboxWorkspace.skillsEligibility }
+        : {}),
+      ...(sandboxWorkspace.skillsWorkspaceDir
+        ? { skillsWorkspaceDir: sandboxWorkspace.skillsWorkspaceDir }
+        : {}),
+      ...(sandboxWorkspace.workspaceAccess
+        ? { workspaceAccess: sandboxWorkspace.workspaceAccess }
+        : {}),
+    },
+    effectiveWorkspace: sandboxWorkspace.workspaceDir,
+    skillsSnapshot: params.skillsSnapshot,
+  });
+  const { shouldLoadSkillEntries, skillEntries } = resolveEmbeddedRunSkillEntries({
+    workspaceDir: skillsWorkspaceDir,
+    config: params.config,
+    agentId: params.agentId,
+    eligibility: skillsEligibility,
+    skillsSnapshot: skillsSnapshotForRun,
+    workspaceOnly,
+  });
+  const promptSkillEntries = mapSandboxSkillEntriesForPrompt({
+    entries: shouldLoadSkillEntries ? skillEntries : undefined,
+    skillsWorkspaceDir,
+    skillsPromptWorkspaceDir,
+  });
+  return resolveSkillsPromptForRun({
+    skillsSnapshot: skillsSnapshotForRun,
+    entries: promptSkillEntries,
+    workspaceDir: skillsPromptWorkspaceDir,
+    config: params.config,
+    agentId: params.agentId,
+    eligibility: skillsEligibility,
+  });
+}
+
 const CLAUDE_CLI_CONTEXT_MODEL_ALIASES: Record<string, string> = {
   opus: "claude-opus-4-8",
   "opus-4.8": "claude-opus-4-8",
@@ -109,10 +192,12 @@ function resolveClaudeCliContextModelId(modelId: string): string {
   return CLAUDE_CLI_CONTEXT_MODEL_ALIASES[lower] ?? trimmed;
 }
 
+/** Overrides preparation dependencies for CLI runner tests. */
 export function setCliRunnerPrepareTestDeps(overrides: Partial<typeof prepareDeps>): void {
   Object.assign(prepareDeps, overrides);
 }
 
+/** Returns whether profile-owned prepared execution should skip local CLI epoch hashing. */
 export function shouldSkipLocalCliCredentialEpoch(params: {
   authEpochMode?: CliBackendAuthEpochMode;
   authProfileId?: string;
@@ -127,6 +212,7 @@ export function shouldSkipLocalCliCredentialEpoch(params: {
   );
 }
 
+/** Builds the complete context required to execute a CLI-backed agent run. */
 export async function prepareCliRunContext(
   params: RunCliAgentParams,
 ): Promise<PreparedCliRunContext> {
@@ -283,6 +369,7 @@ export async function prepareCliRunContext(
           OPENCLAW_MCP_CURRENT_THREAD_TS: params.currentThreadTs ?? "",
           OPENCLAW_MCP_CURRENT_MESSAGE_ID:
             params.currentMessageId != null ? String(params.currentMessageId) : "",
+          OPENCLAW_MCP_CURRENT_INBOUND_AUDIO: params.currentInboundAudio === true ? "true" : "",
           OPENCLAW_MCP_INBOUND_EVENT_KIND: params.currentInboundEventKind ?? "",
           OPENCLAW_MCP_SOURCE_REPLY_DELIVERY_MODE: params.sourceReplyDeliveryMode ?? "",
         }
@@ -360,6 +447,7 @@ export async function prepareCliRunContext(
           currentChannelId: params.currentChannelId,
           currentThreadTs: params.currentThreadTs,
           currentMessageId: params.currentMessageId,
+          currentInboundAudio: params.currentInboundAudio,
           accountId: params.agentAccountId,
           inboundEventKind: params.currentInboundEventKind,
           sourceReplyDeliveryMode: params.sourceReplyDeliveryMode,
@@ -437,13 +525,16 @@ export async function prepareCliRunContext(
     cwd,
     moduleUrl: import.meta.url,
   });
-  const skillsPrompt = resolveSkillsPromptForRun({
-    skillsSnapshot: params.skillsSnapshot,
-    workspaceDir,
-    config: params.config,
-    agentId: sessionAgentId,
-  });
-  const systemPromptSkillsPrompt = claudeSkillsPlugin.args.length > 0 ? "" : skillsPrompt;
+  const systemPromptSkillsPrompt =
+    claudeSkillsPlugin.args.length > 0
+      ? ""
+      : await resolveCliSkillsPrompt({
+          skillsSnapshot: params.skillsSnapshot,
+          workspaceDir,
+          config: params.config,
+          agentId: sessionAgentId,
+          sessionKey: params.sessionKey?.trim() || params.sessionId,
+        });
   const builtSystemPrompt = buildCliAgentSystemPrompt({
     workspaceDir,
     cwd,
@@ -506,13 +597,19 @@ export async function prepareCliRunContext(
     systemPrompt =
       composeSystemPromptWithHookContext({
         baseSystemPrompt: systemPrompt,
-        prependSystemContext: resolveAttemptPrependSystemContext({
-          sessionKey: params.sessionKey,
-          trigger: params.trigger,
-          hookPrependSystemContext: hookResult.prependSystemContext,
-        }),
+        prependSystemContext: hookResult.prependSystemContext,
         appendSystemContext: hookResult.appendSystemContext,
       }) ?? systemPrompt;
+    const mediaTaskSystemPromptAddition = resolveAttemptMediaTaskSystemPromptAddition({
+      sessionKey: params.sessionKey,
+      trigger: params.trigger,
+    });
+    if (mediaTaskSystemPromptAddition) {
+      systemPrompt = prependSystemPromptAddition({
+        systemPrompt: ensureSystemPromptCacheBoundary(systemPrompt),
+        systemPromptAddition: mediaTaskSystemPromptAddition,
+      });
+    }
   } catch (error) {
     cliBackendLog.warn(`cli prompt-build hook preparation failed: ${String(error)}`);
   }
@@ -553,8 +650,19 @@ export async function prepareCliRunContext(
         maxHistoryChars: autoReseedHistoryChars,
       })
     : undefined;
+  const systemPromptWithReplacements = applyPluginTextReplacements(
+    systemPrompt,
+    backendResolved.textTransforms?.input,
+  );
+  // Ensure the cache boundary before appending the model identity so the identity lands in the
+  // dynamic suffix, not the cached prefix, for marker-free hook overrides — otherwise an idle
+  // turn's prefix (O + identity) diverges from an active media turn's prefix (O) and breaks
+  // prompt caching. Skip empty prompts and turns with no identity line, which need no boundary.
   systemPrompt = appendModelIdentitySystemPrompt({
-    systemPrompt: applyPluginTextReplacements(systemPrompt, backendResolved.textTransforms?.input),
+    systemPrompt:
+      buildModelIdentityPromptLine(modelDisplay) && systemPromptWithReplacements.trim().length > 0
+        ? ensureSystemPromptCacheBoundary(systemPromptWithReplacements)
+        : systemPromptWithReplacements,
     model: modelDisplay,
   });
   const systemPromptReport = buildSystemPromptReport({

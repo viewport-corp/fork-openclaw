@@ -1,8 +1,14 @@
+/**
+ * sessions_send built-in tool.
+ *
+ * Sends messages to visible sessions, starts embedded runs, and optionally announces replies.
+ */
 import crypto from "node:crypto";
+import { isRequesterParentOfBackgroundAcpSession } from "@openclaw/acp-core/session-interaction-mode";
 import { finiteSecondsToTimerSafeMilliseconds } from "@openclaw/normalization-core/number-coercion";
 import { normalizeOptionalString } from "@openclaw/normalization-core/string-coerce";
 import { Type } from "typebox";
-import { isRequesterParentOfBackgroundAcpSession } from "../../acp/session-interaction-mode.js";
+import { readAcpSessionMeta } from "../../acp/runtime/session-meta.js";
 import { parseSessionThreadInfoFast } from "../../config/sessions/thread-info.js";
 import type { SessionEntry } from "../../config/sessions/types.js";
 import type { OpenClawConfig } from "../../config/types.openclaw.js";
@@ -167,10 +173,16 @@ type SessionsSendRouteEntry = Pick<SessionEntry, "acp" | "parentSessionKey" | "s
 
 function isRequesterParentOfNativeSubagentSession(params: {
   entry: SessionsSendRouteEntry | null | undefined;
+  acpMeta?: unknown;
   requesterSessionKey: string | null | undefined;
   targetSessionKey: string;
 }): boolean {
-  if (!params.entry || params.entry.acp || !isSubagentSessionKey(params.targetSessionKey)) {
+  if (
+    !params.entry ||
+    params.acpMeta ||
+    params.entry.acp ||
+    !isSubagentSessionKey(params.targetSessionKey)
+  ) {
     return false;
   }
   const requester = normalizeOptionalString(params.requesterSessionKey);
@@ -219,11 +231,17 @@ async function startAgentRun(params: {
     const messageText =
       typeof params.sendParams.message === "string" ? params.sendParams.message : undefined;
     if (activeRunSessionId && fallbackSessionKey && messageText) {
+      const sourceReplyDeliveryMode =
+        params.sendParams.sourceReplyDeliveryMode === "automatic" ||
+        params.sendParams.sourceReplyDeliveryMode === "message_tool_only"
+          ? params.sendParams.sourceReplyDeliveryMode
+          : undefined;
       const queueOptions: EmbeddedAgentQueueMessageOptions = {
         steeringMode: "all",
         debounceMs: 0,
         deliveryTimeoutMs: params.deliveryTimeoutMs,
         waitForTranscriptCommit: true,
+        ...(sourceReplyDeliveryMode ? { sourceReplyDeliveryMode } : {}),
       };
       let queueOutcome = await queueEmbeddedAgentMessageWithOutcomeAsync(
         activeRunSessionId,
@@ -322,13 +340,6 @@ export function createSessionsSendTool(opts?: {
       const sessionKeyParam = readStringParam(params, "sessionKey");
       const labelParam = normalizeOptionalString(readStringParam(params, "label"));
       const labelAgentIdParam = normalizeOptionalString(readStringParam(params, "agentId"));
-      if (sessionKeyParam && labelParam) {
-        return jsonResult({
-          runId: crypto.randomUUID(),
-          status: "error",
-          error: "Provide either sessionKey or label (not both).",
-        });
-      }
 
       let sessionKey = sessionKeyParam;
       if (!sessionKey && !labelParam && labelAgentIdParam) {
@@ -383,7 +394,7 @@ export function createSessionsSendTool(opts?: {
           ...(requestedAgentId ? { agentId: requestedAgentId } : {}),
           ...(restrictToSpawned ? { spawnedBy: effectiveRequesterKey } : {}),
         };
-        let resolvedKey = "";
+        let resolvedKey;
         try {
           const resolved = await gatewayCall<{ key: string }>({
             method: "sessions.resolve",
@@ -451,12 +462,13 @@ export function createSessionsSendTool(opts?: {
         restrictToSpawned,
         visibilitySessionKey: sessionKey,
       });
+      const unresolvedDisplayKey = sessionKey;
       if (!visibleSession.ok) {
         return jsonResult({
           runId: crypto.randomUUID(),
           status: visibleSession.status,
           error: visibleSession.error,
-          sessionKey: visibleSession.displayKey,
+          sessionKey: unresolvedDisplayKey,
         });
       }
       // Normalize sessionKey/sessionId input into a canonical session key.
@@ -475,7 +487,7 @@ export function createSessionsSendTool(opts?: {
           status: "error",
           error:
             "sessions_send cannot target a thread session for inter-agent coordination. Use the parent channel session key instead.",
-          sessionKey: displayKey,
+          sessionKey: unresolvedDisplayKey,
         });
       }
       const visibilityGuard = await createSessionVisibilityGuard({
@@ -490,7 +502,7 @@ export function createSessionsSendTool(opts?: {
           runId: crypto.randomUUID(),
           status: access.status,
           error: access.error,
-          sessionKey: displayKey,
+          sessionKey: unresolvedDisplayKey,
         });
       }
 
@@ -550,6 +562,7 @@ export function createSessionsSendTool(opts?: {
         sessionKey: resolvedKey,
         idempotencyKey,
         deliver: false,
+        sourceReplyDeliveryMode: "message_tool_only" as const,
         channel: INTERNAL_MESSAGE_CHANNEL,
         lane: resolveNestedAgentLaneForSession(resolvedKey),
         extraSystemPrompt: agentMessageContext,
@@ -574,14 +587,20 @@ export function createSessionsSendTool(opts?: {
       // `tools.sessions.visibility=all`) must still go through the normal A2A
       // path so it actually receives a follow-up delivery.
       const targetSessionEntry = loadSessionEntryByKey(resolvedKey);
+      const targetAcpMeta = readAcpSessionMeta({ sessionKey: resolvedKey });
+      const targetSessionEntryWithAcp =
+        targetAcpMeta && targetSessionEntry
+          ? { ...targetSessionEntry, acp: targetAcpMeta }
+          : targetSessionEntry;
       const skipAcpA2AFlow = isRequesterParentOfBackgroundAcpSession(
-        targetSessionEntry,
+        targetSessionEntryWithAcp,
         effectiveRequesterKey,
       );
       const skipNativeParentA2AFlow =
         timeoutSeconds !== 0 &&
         isRequesterParentOfNativeSubagentSession({
           entry: targetSessionEntry,
+          acpMeta: targetAcpMeta,
           requesterSessionKey: effectiveRequesterKey,
           targetSessionKey: resolvedKey,
         });

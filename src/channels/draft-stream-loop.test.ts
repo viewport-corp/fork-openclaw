@@ -1,3 +1,5 @@
+// Draft stream loop tests cover incremental draft updates while channel replies stream.
+import { setImmediate as nextMacrotask } from "node:timers/promises";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { MAX_TIMER_TIMEOUT_MS } from "../shared/number-coercion.js";
 import { createDraftStreamLoop } from "./draft-stream-loop.js";
@@ -8,8 +10,19 @@ const flushMicrotasks = async () => {
 };
 
 const flushMacrotask = async () => {
-  await new Promise((resolve) => setTimeout(resolve, 0));
+  await nextMacrotask();
 };
+
+async function waitForBackgroundFlushError(
+  onBackgroundFlushError: ReturnType<typeof vi.fn<(err: unknown) => void>>,
+) {
+  for (let attempt = 0; attempt < 10; attempt += 1) {
+    await flushMicrotasks();
+    if (onBackgroundFlushError.mock.calls.length > 0) {
+      return;
+    }
+  }
+}
 
 async function captureUnhandledRejections(
   run: (rejections: unknown[]) => Promise<void>,
@@ -58,7 +71,7 @@ describe("createDraftStreamLoop", () => {
       });
 
       loop.update("hello");
-      await flushMicrotasks();
+      await waitForBackgroundFlushError(onBackgroundFlushError);
       await flushMacrotask();
       await loop.flush();
 
@@ -153,7 +166,7 @@ describe("createDraftStreamLoop", () => {
       });
 
       loop.update("hello");
-      await flushMicrotasks();
+      await waitForBackgroundFlushError(onBackgroundFlushError);
       await flushMacrotask();
       await loop.flush();
 
@@ -183,7 +196,7 @@ describe("createDraftStreamLoop", () => {
       });
 
       loop.update("hello");
-      await flushMicrotasks();
+      await waitForBackgroundFlushError(onBackgroundFlushError);
       await flushMacrotask();
       await loop.flush();
 

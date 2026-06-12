@@ -1,3 +1,4 @@
+// Whatsapp tests cover connection controller plugin behavior.
 import { EventEmitter } from "node:events";
 import { DisconnectReason } from "baileys";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -7,8 +8,9 @@ import {
   waitForWhatsAppLoginResult,
   WhatsAppConnectionController,
 } from "./connection-controller.js";
-import type { WhatsAppSendKind, WhatsAppSendResult } from "./inbound/send-result.js";
+import { createAcceptedWhatsAppSendResult } from "./inbound/send-result.test-helper.js";
 import { createWaSocket, waitForWaConnection } from "./session.js";
+import { DEFAULT_WHATSAPP_SOCKET_TIMING } from "./socket-timing.js";
 
 vi.mock("./session.js", async () => {
   const actual = await vi.importActual<typeof import("./session.js")>("./session.js");
@@ -22,20 +24,11 @@ vi.mock("./session.js", async () => {
 const createWaSocketMock = vi.mocked(createWaSocket);
 const waitForWaConnectionMock = vi.mocked(waitForWaConnection);
 
-function acceptedSendResult(kind: WhatsAppSendKind, id: string): WhatsAppSendResult {
-  return {
-    kind,
-    messageId: id,
-    keys: [{ id }],
-    providerAccepted: true,
-  };
-}
-
 function createListenerStub(messageId = "ok") {
   return {
-    sendMessage: vi.fn(async () => acceptedSendResult("text", messageId)),
-    sendPoll: vi.fn(async () => acceptedSendResult("poll", messageId)),
-    sendReaction: vi.fn(async () => acceptedSendResult("reaction", messageId)),
+    sendMessage: vi.fn(async () => createAcceptedWhatsAppSendResult("text", messageId)),
+    sendPoll: vi.fn(async () => createAcceptedWhatsAppSendResult("poll", messageId)),
+    sendReaction: vi.fn(async () => createAcceptedWhatsAppSendResult("reaction", messageId)),
     sendComposingTo: vi.fn(async () => {}),
   };
 }
@@ -130,6 +123,9 @@ describe("WhatsAppConnectionController", () => {
     });
 
     expect(callOrder).toEqual(["create", "wait-for-connection"]);
+    expect(waitForWaConnectionMock).toHaveBeenCalledWith(expect.anything(), {
+      timeoutMs: DEFAULT_WHATSAPP_SOCKET_TIMING.connectTimeoutMs,
+    });
   });
 
   it("restarts login once on status 408 and preserves replacement socket options", async () => {
@@ -180,6 +176,8 @@ describe("WhatsAppConnectionController", () => {
     });
     expect(onQr).toHaveBeenCalledWith("qr-after-timeout");
     expect(onSocketReplaced).toHaveBeenCalledWith(replacementSock);
+    expect(waitForConnection).toHaveBeenNthCalledWith(1, initialSock, { timeout: "none" });
+    expect(waitForConnection).toHaveBeenNthCalledWith(2, replacementSock, { timeout: "none" });
   });
 
   it("still honors the post-pairing 515 restart after a status 408 recovery", async () => {
@@ -213,6 +211,11 @@ describe("WhatsAppConnectionController", () => {
     });
     expect(createSocket).toHaveBeenCalledTimes(2);
     expect(waitForConnection).toHaveBeenCalledTimes(3);
+    expect(waitForConnection).toHaveBeenNthCalledWith(1, initialSock, { timeout: "none" });
+    expect(waitForConnection).toHaveBeenNthCalledWith(2, afterTimeoutSock, { timeout: "none" });
+    expect(waitForConnection).toHaveBeenNthCalledWith(3, afterPairingRestartSock, {
+      timeout: "none",
+    });
     expect(initialSock.end).toHaveBeenCalledOnce();
     expect(afterTimeoutSock.end).toHaveBeenCalledOnce();
   });
@@ -312,7 +315,7 @@ describe("WhatsAppConnectionController", () => {
 
   it("tracks real websocket frame activity in the connection snapshot", async () => {
     vi.useFakeTimers();
-    const controller = new WhatsAppConnectionController({
+    const controllerValue = new WhatsAppConnectionController({
       accountId: "work",
       authDir: "/tmp/wa-auth",
       verbose: false,
@@ -336,7 +339,7 @@ describe("WhatsAppConnectionController", () => {
       waitForWaConnectionMock.mockResolvedValueOnce(undefined);
 
       const snapshots: Array<{ lastTransportActivityAt: number }> = [];
-      await controller.openConnection({
+      await controllerValue.openConnection({
         connectionId: "conn-frame-activity",
         createListener: async () => createListenerStub() as never,
         onHeartbeat: (snapshot) => snapshots.push(snapshot),
@@ -354,14 +357,14 @@ describe("WhatsAppConnectionController", () => {
       const lastSnapshot = snapshots.at(-1);
       expect(lastSnapshot?.lastTransportActivityAt).toBeGreaterThan(firstTransportAt);
     } finally {
-      await controller.shutdown();
+      await controllerValue.shutdown();
       vi.useRealTimers();
     }
   });
 
   it("forces reconnect on transport stall before the long app-silence window", async () => {
     vi.useFakeTimers();
-    const controller = new WhatsAppConnectionController({
+    const controllerLocal = new WhatsAppConnectionController({
       accountId: "work",
       authDir: "/tmp/wa-auth",
       verbose: false,
@@ -385,7 +388,7 @@ describe("WhatsAppConnectionController", () => {
       waitForWaConnectionMock.mockResolvedValueOnce(undefined);
 
       const timeouts: string[] = [];
-      await controller.openConnection({
+      await controllerLocal.openConnection({
         connectionId: "conn-transport-timeout",
         createListener: async () => createListenerStub() as never,
         onWatchdogTimeout: () => timeouts.push("timeout"),
@@ -395,7 +398,7 @@ describe("WhatsAppConnectionController", () => {
 
       expect(timeouts.length).toBeGreaterThanOrEqual(1);
     } finally {
-      await controller.shutdown();
+      await controllerLocal.shutdown();
       vi.useRealTimers();
     }
   });

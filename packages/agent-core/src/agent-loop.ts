@@ -1,18 +1,15 @@
-/**
- * Agent loop that works with AgentMessage throughout.
- * Transforms to Message[] only at the LLM call boundary.
- */
-
 // Keep the runtime class on the package specifier so built agent-core shares
 // constructor identity with @openclaw/llm-core; source types keep SDK d.ts bundled.
 import { EventStream as LlmEventStream } from "@openclaw/llm-core";
 import type {
   AssistantMessage,
+  AssistantMessageEvent,
   Context,
   EventStream,
   ToolResultMessage,
 } from "../../llm-core/src/index.js";
 import type { EventStream as SourceEventStream } from "../../llm-core/src/index.js";
+import { resolveAgentReasoningOption } from "./reasoning.js";
 import { type AgentCoreStreamRuntimeDeps, resolveAgentCoreStreamFn } from "./runtime-deps.js";
 import type {
   AgentContext,
@@ -26,6 +23,7 @@ import type {
 } from "./types.js";
 import { validateToolArguments } from "./validation.js";
 
+/** Callback used by synchronous loop runners to publish agent lifecycle events. */
 export type AgentEventSink = (event: AgentEvent) => Promise<void> | void;
 
 const EMPTY_USAGE = {
@@ -38,6 +36,49 @@ const EMPTY_USAGE = {
 };
 
 const EventStreamConstructor: typeof SourceEventStream = LlmEventStream;
+
+type AssistantMessageUpdateEvent = Extract<
+  AssistantMessageEvent,
+  {
+    type:
+      | "text_start"
+      | "text_delta"
+      | "text_end"
+      | "thinking_start"
+      | "thinking_delta"
+      | "thinking_end"
+      | "toolcall_start"
+      | "toolcall_delta"
+      | "toolcall_end";
+  }
+>;
+
+function appendTextDeltaToAssistantMessage(
+  message: AssistantMessage,
+  contentIndex: number,
+  delta: string,
+): AssistantMessage {
+  const content = [...message.content];
+  const currentContent = content[contentIndex];
+  content[contentIndex] =
+    currentContent?.type === "text"
+      ? { ...currentContent, text: currentContent.text + delta }
+      : { type: "text", text: delta };
+  return { ...message, content };
+}
+
+function resolveAssistantMessageUpdate(
+  event: AssistantMessageUpdateEvent,
+  currentMessage: AssistantMessage,
+): AssistantMessage {
+  if ("partial" in event && event.partial) {
+    return event.partial;
+  }
+  if (event.type === "text_delta") {
+    return appendTextDeltaToAssistantMessage(currentMessage, event.contentIndex, event.delta);
+  }
+  return currentMessage;
+}
 
 /**
  * Start an agent loop with a new prompt message.
@@ -67,7 +108,7 @@ export function agentLoop(
     .then((messages) => {
       stream.end(messages);
     })
-    .catch((error) => {
+    .catch((error: unknown) => {
       pushLoopFailure(stream, config, error, signal?.aborted === true);
     });
 
@@ -112,13 +153,14 @@ export function agentLoopContinue(
     .then((messages) => {
       stream.end(messages);
     })
-    .catch((error) => {
+    .catch((error: unknown) => {
       pushLoopFailure(stream, config, error, signal?.aborted === true);
     });
 
   return stream;
 }
 
+/** Run a prompt-started loop and emit events through a caller-owned sink. */
 export async function runAgentLoop(
   prompts: AgentMessage[],
   context: AgentContext,
@@ -145,6 +187,7 @@ export async function runAgentLoop(
   return newMessages;
 }
 
+/** Continue an existing loop context and emit only newly produced messages. */
 export async function runAgentLoopContinue(
   context: AgentContext,
   config: AgentLoopConfig,
@@ -247,7 +290,6 @@ async function runLoop(
           currentContext.messages.push(message);
           newMessages.push(message);
         }
-        pendingMessages = [];
       }
 
       // Stream assistant response
@@ -300,14 +342,19 @@ async function runLoop(
       const nextTurnSnapshot = await config.prepareNextTurn?.(nextTurnContext);
       if (nextTurnSnapshot) {
         currentContext = nextTurnSnapshot.context ?? currentContext;
+        const nextModel = nextTurnSnapshot.model ?? config.model;
+        const nextThinkingLevel = nextTurnSnapshot.thinkingLevel ?? config.thinkingLevel;
+        const shouldResolveReasoning =
+          nextTurnSnapshot.thinkingLevel !== undefined ||
+          (nextTurnSnapshot.model !== undefined && nextThinkingLevel !== undefined);
+        const nextReasoning =
+          shouldResolveReasoning && nextThinkingLevel !== undefined
+            ? resolveAgentReasoningOption(nextModel, nextThinkingLevel)
+            : config.reasoning;
         config = Object.assign({}, config, {
-          model: nextTurnSnapshot.model ?? config.model,
-          reasoning:
-            nextTurnSnapshot.thinkingLevel === undefined
-              ? config.reasoning
-              : nextTurnSnapshot.thinkingLevel === "off"
-                ? undefined
-                : nextTurnSnapshot.thinkingLevel,
+          model: nextModel,
+          thinkingLevel: nextThinkingLevel,
+          reasoning: nextReasoning,
         });
       }
 
@@ -326,10 +373,10 @@ async function runLoop(
       pendingMessages = (await config.getSteeringMessages?.()) || [];
     }
 
-    // Agent would stop here. Check for follow-up messages.
     const followUpMessages = (await config.getFollowUpMessages?.()) || [];
     if (followUpMessages.length > 0) {
-      // Set as pending so inner loop processes them
+      // Follow-up messages arrive after a turn would otherwise end; route them through the
+      // same pending-message path so event ordering matches steering messages.
       pendingMessages = followUpMessages;
       continue;
     }
@@ -405,7 +452,7 @@ async function streamAssistantResponse(
       case "toolcall_delta":
       case "toolcall_end":
         if (partialMessage) {
-          const message = event.partial;
+          const message = resolveAssistantMessageUpdate(event, partialMessage);
           partialMessage = message;
           context.messages[context.messages.length - 1] = message;
           await emit({

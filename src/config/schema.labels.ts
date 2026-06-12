@@ -1,3 +1,4 @@
+// Defines user-facing config field labels used by schema metadata.
 import { MEDIA_AUDIO_FIELD_LABELS } from "./media-audio-field-metadata.js";
 
 export const FIELD_LABELS: Record<string, string> = {
@@ -130,6 +131,7 @@ export const FIELD_LABELS: Record<string, string> = {
   "gateway.tailscale": "Gateway Tailscale",
   "gateway.tailscale.mode": "Gateway Tailscale Mode",
   "gateway.tailscale.resetOnExit": "Gateway Tailscale Reset on Exit",
+  "gateway.tailscale.serviceName": "Gateway Tailscale Service Name",
   "gateway.tailscale.preserveFunnel": "Gateway Tailscale Preserve External Funnel",
   "gateway.remote": "Remote Gateway",
   "gateway.remote.transport": "Remote Gateway Transport",
@@ -381,7 +383,6 @@ export const FIELD_LABELS: Record<string, string> = {
   "gateway.nodes.pairing.autoApproveCidrs": "Gateway Node Pairing Auto-Approve CIDRs",
   "gateway.nodes.allowCommands": "Gateway Node Allowlist (Extra Commands)",
   "gateway.nodes.denyCommands": "Gateway Node Denylist",
-  "gateway.webchat.chatHistoryMaxChars": "WebChat History Max Chars",
   nodeHost: "Node Host",
   "nodeHost.browserProxy": "Node Browser Proxy",
   "nodeHost.browserProxy.enabled": "Node Browser Proxy Enabled",
@@ -419,6 +420,7 @@ export const FIELD_LABELS: Record<string, string> = {
   "skills.load.allowSymlinkTargets": "Allowed Skill Symlink Targets",
   "skills.load.watch": "Watch Skills",
   "skills.load.watchDebounceMs": "Skills Watch Debounce (ms)",
+  "skills.workshop.allowSymlinkTargetWrites": "Allow Skill Workshop Symlink Writes",
   "agents.defaults.skills": "Skills",
   "agents.defaults.subagents.delegationMode": "Sub-agent Delegation Mode",
   "agents.list[].subagents.delegationMode": "Sub-agent Delegation Mode",
@@ -515,6 +517,7 @@ export const FIELD_LABELS: Record<string, string> = {
   "memory.qmd.mcporter.serverName": "QMD MCPorter Server Name",
   "memory.qmd.mcporter.startDaemon": "QMD MCPorter Start Daemon",
   "memory.qmd.searchMode": "QMD Search Mode",
+  "memory.qmd.rerank": "QMD Rerank",
   "memory.qmd.searchTool": "QMD Search Tool Override",
   "memory.qmd.includeDefaultMemory": "QMD Include Default Memory",
   "memory.qmd.paths": "QMD Extra Paths",
@@ -784,6 +787,9 @@ export const FIELD_LABELS: Record<string, string> = {
   "ui.assistant": "Assistant Appearance",
   "ui.assistant.name": "Assistant Name",
   "ui.assistant.avatar": "Assistant Avatar",
+  tui: "Terminal UI",
+  "tui.footer": "Terminal UI Footer",
+  "tui.footer.showRemoteHost": "Show Remote Host in TUI Footer",
   "browser.evaluateEnabled": "Browser Evaluate Enabled",
   "browser.snapshotDefaults": "Browser Snapshot Defaults",
   "browser.snapshotDefaults.mode": "Browser Snapshot Mode",
