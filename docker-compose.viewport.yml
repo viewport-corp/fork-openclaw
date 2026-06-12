@@ -8,6 +8,12 @@ services:
     environment:
       OPENCLAW_GATEWAY_PORT: "18789"
       OPENCLAW_BRIDGE_PORT: "18790"
+      # gh CLI only auto-detects GH_TOKEN/GITHUB_TOKEN. Keep the canonical
+      # runtime secret name as GITHUB_TOKEN_VIEWPORT_CORP and expose safe
+      # aliases inside the OpenClaw gateway/CLI containers without committing
+      # or printing the token value.
+      GH_TOKEN: ${GITHUB_TOKEN_VIEWPORT_CORP:-}
+      GITHUB_TOKEN: ${GITHUB_TOKEN_VIEWPORT_CORP:-}
     build:
       context: .
       dockerfile: Dockerfile
@@ -33,6 +39,12 @@ services:
     environment:
       OPENCLAW_GATEWAY_PORT: "18789"
       OPENCLAW_BRIDGE_PORT: "18790"
+      # gh CLI only auto-detects GH_TOKEN/GITHUB_TOKEN. Keep the canonical
+      # runtime secret name as GITHUB_TOKEN_VIEWPORT_CORP and expose safe
+      # aliases inside the OpenClaw gateway/CLI containers without committing
+      # or printing the token value.
+      GH_TOKEN: ${GITHUB_TOKEN_VIEWPORT_CORP:-}
+      GITHUB_TOKEN: ${GITHUB_TOKEN_VIEWPORT_CORP:-}
     build:
       context: .
       dockerfile: Dockerfile
