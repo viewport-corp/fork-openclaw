@@ -49,6 +49,10 @@ minimumReleaseAgeExclude:
   - "@smithy/shared-ini-file-loader@4.5.4"
   - "@typescript/native-preview*"
   - "@types/node"
+  # Temporary security-fix exception: esbuild 0.28.1 patches the current
+  # advisory but was published inside the 48h minimum-release-age window.
+  - "esbuild@0.28.1"
+  - "@esbuild/*"
   - "@rolldown/*"
   - "@oxlint/*"
   - "@oxfmt/*"
@@ -66,6 +70,7 @@ nodeLinker: hoisted
 blockExoticSubdeps: true
 
 overrides:
+  esbuild: 0.28.1
   "@anthropic-ai/sdk": 0.100.1
   "@aws-sdk/core": 3.974.13
   "@aws-sdk/credential-provider-node": 3.972.52
