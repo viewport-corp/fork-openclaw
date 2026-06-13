@@ -71,6 +71,10 @@ blockExoticSubdeps: true
 
 overrides:
   esbuild: 0.28.1
+  cliui: 6.0.0
+  wrap-ansi: 6.2.0
+  y18n: 4.0.3
+  yargs-parser: 18.1.3
   "@anthropic-ai/sdk": 0.100.1
   "@aws-sdk/core": 3.974.13
   "@aws-sdk/credential-provider-node": 3.972.52
