@@ -1,3 +1,4 @@
+// Feishu tests cover bot plugin behavior.
 import type * as ConversationRuntime from "openclaw/plugin-sdk/conversation-runtime";
 import { createRuntimeEnv } from "openclaw/plugin-sdk/plugin-test-runtime";
 import type { ResolvedAgentRoute } from "openclaw/plugin-sdk/routing";
@@ -162,13 +163,6 @@ function buildDefaultResolveRoute(): ResolvedAgentRoute {
     matchedBy: "default",
   };
 }
-
-function createUnboundConfiguredRoute(
-  route: NonNullable<ConfiguredBindingRoute>["route"],
-): ConfiguredBindingRoute {
-  return { bindingResolution: null, route };
-}
-
 function createFeishuBotRuntime(overrides: DeepPartial<PluginRuntime> = {}): PluginRuntime {
   return {
     channel: {
@@ -217,6 +211,7 @@ function createFeishuBotRuntime(overrides: DeepPartial<PluginRuntime> = {}): Plu
             onRecordError: turn.record?.onRecordError ?? (() => undefined),
           });
           return {
+            dispatched: true,
             dispatchResult: await turn.runDispatch(),
           };
         }),
@@ -301,6 +296,7 @@ const {
     dispatcher: createReplyDispatcher(),
     replyOptions: {},
     markDispatchIdle: vi.fn(),
+    ensureNoVisibleReplyFallback: vi.fn(),
   })),
   mockSendMessageFeishu: vi.fn().mockResolvedValue({ messageId: "pairing-msg", chatId: "oc-dm" }),
   mockGetMessageFeishu: vi.fn().mockResolvedValue(null),
@@ -471,6 +467,7 @@ describe("handleFeishuMessage ACP routing", () => {
       dispatcher: createReplyDispatcher(),
       replyOptions: {},
       markDispatchIdle: vi.fn(),
+      ensureNoVisibleReplyFallback: vi.fn(),
     });
 
     setFeishuRuntime(createFeishuBotRuntime());
@@ -526,6 +523,40 @@ describe("handleFeishuMessage ACP routing", () => {
     const message = mockCallArg<{ text?: string; to?: string }>(mockSendMessageFeishu, 0, 0);
     expect(message.to).toBe("chat:oc_dm");
     expect(message.text).toContain("runtime unavailable");
+  });
+
+  it("surfaces configured ACP initialization failures inside P2P direct-message threads", async () => {
+    mockResolveConfiguredBindingRoute.mockReturnValue(createConfiguredFeishuRoute());
+    mockEnsureConfiguredBindingRouteReady.mockResolvedValue(
+      createConfiguredBindingReadiness(false, "runtime unavailable"),
+    );
+
+    await dispatchMessage({
+      cfg: {
+        session: { mainKey: "main", scope: "per-sender" },
+        channels: { feishu: { enabled: true, allowFrom: ["ou_sender_1"], dmPolicy: "open" } },
+      },
+      event: {
+        sender: { sender_id: { open_id: "ou_sender_1" } },
+        message: {
+          message_id: "msg-thread-child",
+          root_id: "msg-thread-root",
+          thread_id: "omt-acp-dm-thread",
+          chat_id: "oc_dm",
+          chat_type: "p2p",
+          message_type: "text",
+          content: JSON.stringify({ text: "hello" }),
+        },
+      },
+    });
+
+    expect(mockSendMessageFeishu).toHaveBeenCalledWith(
+      expect.objectContaining({
+        to: "chat:oc_dm",
+        replyToMessageId: "msg-thread-root",
+        replyInThread: true,
+      }),
+    );
   });
 
   it("routes Feishu topic messages through active bound conversations", async () => {
@@ -1022,6 +1053,54 @@ describe("handleFeishuMessage command authorization", () => {
     );
   });
 
+  it("routes /compact through the standard reply dispatch path (#90185)", async () => {
+    mockShouldComputeCommandAuthorized.mockReturnValue(true);
+
+    const cfg: ClawdbotConfig = {
+      channels: {
+        feishu: {
+          dmPolicy: "open",
+        },
+      },
+    } as ClawdbotConfig;
+
+    await dispatchMessage({
+      cfg,
+      event: {
+        sender: {
+          sender_id: {
+            open_id: "ou-command-user",
+          },
+        },
+        message: {
+          message_id: "msg-compact-command",
+          chat_id: "oc-dm",
+          chat_type: "p2p",
+          message_type: "text",
+          content: JSON.stringify({ text: "/compact" }),
+        },
+      },
+    });
+
+    expect(mockDispatchReplyFromConfig).toHaveBeenCalledTimes(1);
+    const dispatchParams = mockCallArg<{
+      ctx: {
+        CommandAuthorized?: boolean;
+        CommandBody?: string;
+        BodyForCommands?: string;
+        RawBody?: string;
+        MessageSid?: string;
+      };
+    }>(mockDispatchReplyFromConfig, 0, 0);
+    expect(dispatchParams.ctx).toMatchObject({
+      CommandAuthorized: true,
+      CommandBody: "/compact",
+      BodyForCommands: "/compact",
+      RawBody: "/compact",
+      MessageSid: "msg-compact-command",
+    });
+  });
+
   it("does not enqueue inbound preview text as system events", async () => {
     mockShouldComputeCommandAuthorized.mockReturnValue(false);
 
@@ -1051,6 +1130,90 @@ describe("handleFeishuMessage command authorization", () => {
     await dispatchMessage({ cfg, event });
 
     expect(mockEnqueueSystemEvent).not.toHaveBeenCalled();
+  });
+
+  it("does not send no-visible fallback when send policy denied delivery", async () => {
+    mockDispatchReplyFromConfig.mockResolvedValueOnce({
+      queuedFinal: false,
+      counts: { tool: 0, block: 0, final: 0 },
+      sendPolicyDenied: true,
+      noVisibleReplyFallbackEligible: true,
+    });
+    const ensureNoVisibleReplyFallback = vi.fn();
+    mockCreateFeishuReplyDispatcher.mockReturnValueOnce({
+      dispatcher: createReplyDispatcher(),
+      replyOptions: {},
+      markDispatchIdle: vi.fn(),
+      ensureNoVisibleReplyFallback,
+    });
+
+    await dispatchMessage({
+      cfg: {
+        channels: {
+          feishu: {
+            dmPolicy: "open",
+          },
+        },
+      } as ClawdbotConfig,
+      event: {
+        sender: {
+          sender_id: {
+            open_id: "ou-sender",
+          },
+        },
+        message: {
+          message_id: "msg-send-policy-deny",
+          chat_id: "oc-dm",
+          chat_type: "p2p",
+          message_type: "text",
+          content: JSON.stringify({ text: "hello" }),
+        },
+      },
+    });
+
+    expect(ensureNoVisibleReplyFallback).not.toHaveBeenCalled();
+  });
+
+  it("sends no-visible fallback when queued final delivery fails", async () => {
+    mockDispatchReplyFromConfig.mockResolvedValueOnce({
+      queuedFinal: true,
+      counts: { tool: 0, block: 0, final: 1 },
+    });
+    const ensureNoVisibleReplyFallback = vi.fn();
+    const dispatcher = createReplyDispatcher();
+    vi.mocked(dispatcher.getFailedCounts).mockReturnValue({ tool: 0, block: 0, final: 1 });
+    mockCreateFeishuReplyDispatcher.mockReturnValueOnce({
+      dispatcher,
+      replyOptions: {},
+      markDispatchIdle: vi.fn(),
+      ensureNoVisibleReplyFallback,
+    });
+
+    await dispatchMessage({
+      cfg: {
+        channels: {
+          feishu: {
+            dmPolicy: "open",
+          },
+        },
+      } as ClawdbotConfig,
+      event: {
+        sender: {
+          sender_id: {
+            open_id: "ou-sender",
+          },
+        },
+        message: {
+          message_id: "msg-final-delivery-failed",
+          chat_id: "oc-dm",
+          chat_type: "p2p",
+          message_type: "text",
+          content: JSON.stringify({ text: "hello" }),
+        },
+      },
+    });
+
+    expect(ensureNoVisibleReplyFallback).toHaveBeenCalledWith("dispatch-complete-no-visible-reply");
   });
 
   it("passes disabled config-write policy to dynamic agent creation", async () => {
@@ -3228,6 +3391,79 @@ describe("handleFeishuMessage command authorization", () => {
     );
     expect(dispatcherOptions.replyToMessageId).toBe("om_topic_sender_root");
     expect(dispatcherOptions.rootId).toBe("om_topic_sender_root");
+  });
+
+  it("keeps P2P replies inside a direct-message thread when Feishu supplies thread_id", async () => {
+    mockShouldComputeCommandAuthorized.mockReturnValue(false);
+
+    const cfg: ClawdbotConfig = {
+      channels: {
+        feishu: {
+          dmPolicy: "open",
+        },
+      },
+    } as ClawdbotConfig;
+
+    const event: FeishuMessageEvent = {
+      sender: { sender_id: { open_id: "ou-thread-dm" } },
+      message: {
+        message_id: "om_dm_thread_child",
+        root_id: "om_dm_thread_root",
+        thread_id: "omt_dm_thread",
+        chat_id: "oc-dm-thread",
+        chat_type: "p2p",
+        message_type: "text",
+        content: JSON.stringify({ text: "hello inside a DM thread" }),
+      },
+    };
+
+    await dispatchMessage({ cfg, event });
+
+    expect(mockCreateFeishuReplyDispatcher).toHaveBeenCalledWith(
+      expect.objectContaining({
+        replyToMessageId: "om_dm_thread_root",
+        rootId: "om_dm_thread_root",
+        skipReplyToInMessages: false,
+        replyInThread: true,
+        threadReply: true,
+      }),
+    );
+  });
+
+  it("keeps root_id-only P2P replies as quote replies outside thread mode", async () => {
+    mockShouldComputeCommandAuthorized.mockReturnValue(false);
+
+    const cfg: ClawdbotConfig = {
+      channels: {
+        feishu: {
+          dmPolicy: "open",
+        },
+      },
+    } as ClawdbotConfig;
+
+    const event: FeishuMessageEvent = {
+      sender: { sender_id: { open_id: "ou-quote-dm" } },
+      message: {
+        message_id: "om_dm_quote_reply",
+        root_id: "om_dm_quote_root",
+        chat_id: "oc-dm-quote",
+        chat_type: "p2p",
+        message_type: "text",
+        content: JSON.stringify({ text: "quoted DM reply" }),
+      },
+    };
+
+    await dispatchMessage({ cfg, event });
+
+    expect(mockCreateFeishuReplyDispatcher).toHaveBeenCalledWith(
+      expect.objectContaining({
+        replyToMessageId: "om_dm_quote_reply",
+        rootId: "om_dm_quote_root",
+        skipReplyToInMessages: true,
+        replyInThread: false,
+        threadReply: false,
+      }),
+    );
   });
 
   it("forces thread replies when inbound message contains thread_id", async () => {

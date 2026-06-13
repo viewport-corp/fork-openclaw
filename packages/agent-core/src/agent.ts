@@ -1,3 +1,4 @@
+// Agent Core module implements agent behavior.
 import type {
   ImageContent,
   Message,
@@ -8,6 +9,7 @@ import type {
   Transport,
 } from "../../llm-core/src/index.js";
 import { runAgentLoop, runAgentLoopContinue } from "./agent-loop.js";
+import { resolveAgentReasoningOption } from "./reasoning.js";
 import { type AgentCoreStreamRuntimeDeps, resolveAgentCoreStreamFn } from "./runtime-deps.js";
 import type {
   AfterToolCallContext,
@@ -100,33 +102,51 @@ function createMutableAgentState(
 
 /** Options for constructing an {@link Agent}. */
 export interface AgentOptions {
+  /** Initial transcript, tools, model, and prompt state. */
   initialState?: Partial<
     Omit<AgentState, "pendingToolCalls" | "isStreaming" | "streamingMessage" | "errorMessage">
   >;
+  /** Convert agent-owned transcript messages into provider-facing messages. */
   convertToLlm?: (messages: AgentMessage[]) => Message[] | Promise<Message[]>;
+  /** Optionally rewrite context before each provider request. */
   transformContext?: (messages: AgentMessage[], signal?: AbortSignal) => Promise<AgentMessage[]>;
+  /** Injected stream runtime used when streamFn is not supplied. */
   runtime?: AgentCoreStreamRuntimeDeps;
+  /** Explicit stream implementation, preferred over runtime.streamSimple. */
   streamFn?: StreamFn;
+  /** Resolve provider API keys at request time. */
   getApiKey?: (provider: string) => Promise<string | undefined> | string | undefined;
+  /** Inspect the provider payload before it is sent. */
   onPayload?: SimpleStreamOptions["onPayload"];
+  /** Inspect the provider response after it returns. */
   onResponse?: SimpleStreamOptions["onResponse"];
+  /** Hook that may short-circuit or alter a tool call before execution. */
   beforeToolCall?: (
     context: BeforeToolCallContext,
     signal?: AbortSignal,
   ) => Promise<BeforeToolCallResult | undefined>;
+  /** Hook that may alter a tool result after execution. */
   afterToolCall?: (
     context: AfterToolCallContext,
     signal?: AbortSignal,
   ) => Promise<AfterToolCallResult | undefined>;
+  /** Hook that may update model, reasoning, or context after a turn. */
   prepareNextTurn?: (
     signal?: AbortSignal,
   ) => Promise<AgentLoopTurnUpdate | undefined> | AgentLoopTurnUpdate | undefined;
+  /** Queue drain mode for steering messages injected before the next assistant response. */
   steeringMode?: QueueMode;
+  /** Queue drain mode for follow-up messages injected after the agent would otherwise stop. */
   followUpMode?: QueueMode;
+  /** Session identifier forwarded to cache-aware providers. */
   sessionId?: string;
+  /** Optional per-thinking-level token budgets forwarded to providers. */
   thinkingBudgets?: ThinkingBudgets;
+  /** Preferred provider transport. */
   transport?: Transport;
+  /** Optional cap for provider-requested retry delays. */
   maxRetryDelayMs?: number;
+  /** Default strategy for executing multiple tool calls in one assistant message. */
   toolExecution?: ToolExecutionMode;
 }
 
@@ -153,6 +173,7 @@ class PendingMessageQueue {
       return drained;
     }
 
+    // one-at-a-time preserves later queued messages for subsequent loop turns.
     const first = this.messages[0];
     if (!first) {
       return [];
@@ -450,8 +471,11 @@ export class Agent {
     let skipInitialSteeringPoll = options.skipInitialSteeringPoll === true;
     return {
       model: this.mutableState.model,
-      reasoning:
-        this.mutableState.thinkingLevel === "off" ? undefined : this.mutableState.thinkingLevel,
+      thinkingLevel: this.mutableState.thinkingLevel,
+      reasoning: resolveAgentReasoningOption(
+        this.mutableState.model,
+        this.mutableState.thinkingLevel,
+      ),
       sessionId: this.sessionId,
       onPayload: this.onPayload,
       onResponse: this.onResponse,

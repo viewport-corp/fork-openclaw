@@ -1,3 +1,8 @@
+/**
+ * web_fetch built-in tool.
+ *
+ * Fetches HTTP(S) content through SSRF guards, provider config, caching, and bounded extraction.
+ */
 import {
   normalizeLowercaseStringOrEmpty,
   normalizeOptionalLowercaseString,
@@ -327,6 +332,24 @@ function throwIfFetchAborted(signal: AbortSignal | undefined): void {
   throw signal.reason instanceof Error ? signal.reason : new Error("aborted");
 }
 
+/**
+ * Sanitize a web_fetch URL parameter that may contain LLM-injected whitespace.
+ *
+ * Fixes the reported case where a model emits a space between the scheme and
+ * authority (e.g. `https:// docs.openclaw.ai`), which causes `new URL()` to
+ * throw. Path and query whitespace is intentionally preserved — the WHATWG URL
+ * parser percent-encodes those characters correctly per RFC 3986.
+ */
+export function sanitizeWebFetchUrl(raw: string): string {
+  let end = raw.length;
+  while (end > 0 && raw.charCodeAt(end - 1) <= 0x20) {
+    end -= 1;
+  }
+  const trimmed = raw.slice(0, end).replace(/^\s+/, "");
+  const repaired = trimmed.replace(/^(https?:\/\/)\s+/i, "$1");
+  return repaired.replace(/^(https?:\/\/[^/?#\s]+)\s+$/i, "$1");
+}
+
 function normalizeProviderWebFetchPayload(params: {
   providerId: string;
   payload: unknown;
@@ -444,7 +467,7 @@ async function runWebFetch(params: WebFetchRuntimeParams): Promise<Record<string
 
   const start = Date.now();
   let res: Response;
-  let release: (() => Promise<void>) | null = null;
+  let release: (() => Promise<void>) | null;
   let finalUrl = params.url;
   try {
     const fetchWithWebToolsNetworkGuard = await loadWebGuardedFetch();
@@ -698,7 +721,9 @@ export function createWebFetchTool(options?: {
         return providerFallbackCache;
       };
       const params = args as Record<string, unknown>;
-      const url = readStringParam(params, "url", { required: true });
+      const url = sanitizeWebFetchUrl(
+        readStringParam(params, "url", { required: true, trim: false }),
+      );
       const extractMode = readStringParam(params, "extractMode") === "text" ? "text" : "markdown";
       const maxChars = readPositiveIntegerParam(params, "maxChars");
       const maxCharsCap = resolveFetchMaxCharsCap(executionFetch);

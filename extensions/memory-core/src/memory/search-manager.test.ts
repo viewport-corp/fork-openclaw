@@ -1,3 +1,4 @@
+// Memory Core tests cover search manager plugin behavior.
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -139,7 +140,7 @@ import {
   closeMemorySearchManager,
   getMemorySearchManager,
 } from "./search-manager.js";
-const createQmdManagerMock = vi.mocked(QmdMemoryManager.create);
+const createQmdManagerMock = vi.mocked(QmdMemoryManager["create"]);
 
 type QmdManagerInstance = Awaited<ReturnType<typeof QmdMemoryManager.create>>;
 type SearchManagerResult = Awaited<ReturnType<typeof getMemorySearchManager>>;
@@ -338,9 +339,11 @@ describe("getMemorySearchManager caching", () => {
       errorMessage: "qmd query failed",
     });
 
-    const fallbackResults = await firstManager.search("hello");
+    const controller = new AbortController();
+    const fallbackResults = await firstManager.search("hello", { signal: controller.signal });
     expect(fallbackResults).toHaveLength(1);
     expect(fallbackResults[0]?.path).toBe("MEMORY.md");
+    expect(fallbackSearch).toHaveBeenCalledWith("hello", { signal: controller.signal });
 
     const second = await getMemorySearchManager({ cfg, agentId: retryAgentId });
     requireManager(second);

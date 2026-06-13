@@ -1,3 +1,8 @@
+/**
+ * Sandbox browser container lifecycle.
+ *
+ * Starts or reuses Chrome/noVNC containers, exposes authenticated CDP/observer URLs, and tracks browser registry state.
+ */
 import crypto from "node:crypto";
 import {
   normalizeOptionalLowercaseString,
@@ -103,7 +108,9 @@ async function waitForSandboxCdp(params: {
     if (remainingMs <= 0) {
       break;
     }
-    await new Promise((r) => setTimeout(r, Math.min(150, remainingMs)));
+    await new Promise((r) => {
+      setTimeout(r, Math.min(150, remainingMs));
+    });
   }
   return false;
 }
@@ -211,6 +218,7 @@ export async function ensureSandboxBrowser(params: {
   scopeKey: string;
   workspaceDir: string;
   agentWorkspaceDir: string;
+  skillsWorkspaceDir?: string;
   cfg: SandboxConfig;
   evaluateEnabled?: boolean;
   bridgeAuth?: { token?: string; password?: string };
@@ -236,6 +244,7 @@ export async function ensureSandboxBrowser(params: {
   const readOnlyWorkspaceSkillMounts = resolveReadOnlyWorkspaceSkillMounts({
     workspaceDir: params.workspaceDir,
     agentWorkspaceDir: params.agentWorkspaceDir,
+    skillsWorkspaceDir: params.skillsWorkspaceDir,
     workdir: params.cfg.docker.workdir,
     workspaceAccess: params.cfg.workspaceAccess,
   });
@@ -347,6 +356,7 @@ export async function ensureSandboxBrowser(params: {
       args,
       workspaceDir: params.workspaceDir,
       agentWorkspaceDir: params.agentWorkspaceDir,
+      skillsWorkspaceDir: params.skillsWorkspaceDir,
       workdir: params.cfg.docker.workdir,
       workspaceAccess: params.cfg.workspaceAccess,
       readOnlyWorkspaceSkillMounts,
