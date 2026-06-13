@@ -1,3 +1,4 @@
+// Release Beta Verifier script supports OpenClaw repository automation.
 import { execFileSync } from "node:child_process";
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
@@ -20,6 +21,7 @@ export type ReleaseVerifyBetaArgs = {
   pluginSelection: string[];
   evidenceOut?: string;
   skipPostpublish: boolean;
+  skipGitHubRelease: boolean;
   skipClawHub: boolean;
   rerunFailedClawHub: boolean;
   workflowRuns: {
@@ -117,7 +119,7 @@ export function parseReleaseVerifyBetaArgs(argv: string[]): ReleaseVerifyBetaArg
   const version = values.shift();
   if (!version || version.startsWith("-")) {
     throw new Error(
-      "Usage: pnpm release:verify-beta -- <version> [--workflow-ref REF] [--full-release-validation-run ID] [--openclaw-npm-run ID] [--plugin-npm-run ID] [--plugin-clawhub-run ID] [--npm-telegram-run ID] [--skip-clawhub]",
+      "Usage: pnpm release:verify-beta -- <version> [--workflow-ref REF] [--full-release-validation-run ID] [--openclaw-npm-run ID] [--plugin-npm-run ID] [--plugin-clawhub-run ID] [--npm-telegram-run ID] [--skip-github-release] [--skip-clawhub]",
     );
   }
 
@@ -131,6 +133,7 @@ export function parseReleaseVerifyBetaArgs(argv: string[]): ReleaseVerifyBetaArg
     pluginSelection: [],
     evidenceOut: undefined,
     skipPostpublish: false,
+    skipGitHubRelease: false,
     skipClawHub: false,
     rerunFailedClawHub: false,
     workflowRuns: {},
@@ -190,6 +193,9 @@ export function parseReleaseVerifyBetaArgs(argv: string[]): ReleaseVerifyBetaArg
       case "--skip-postpublish":
         parsed.skipPostpublish = true;
         break;
+      case "--skip-github-release":
+        parsed.skipGitHubRelease = true;
+        break;
       case "--skip-clawhub":
         parsed.skipClawHub = true;
         break;
@@ -224,7 +230,9 @@ async function fetchWithRetry(
       lastError = error;
     }
     if (attempt < attempts) {
-      await new Promise((resolveDelay) => setTimeout(resolveDelay, attempt * 1000));
+      await new Promise((resolveDelay) => {
+        setTimeout(resolveDelay, attempt * 1000);
+      });
     }
   }
   const message = lastError instanceof Error ? lastError.message : String(lastError);
@@ -476,8 +484,12 @@ export async function verifyBetaRelease(
   }
 
   const lines: string[] = [];
-  const releaseUrl = verifyGitHubRelease(args);
-  lines.push(`GitHub release OK: ${releaseUrl}`);
+  const releaseUrl = args.skipGitHubRelease ? undefined : verifyGitHubRelease(args);
+  if (releaseUrl === undefined) {
+    lines.push("GitHub release skipped: final release page is created after verification");
+  } else {
+    lines.push(`GitHub release OK: ${releaseUrl}`);
+  }
 
   const openclawNpm = verifyNpmPackage("openclaw", args.version, args.distTag);
   lines.push(`openclaw npm OK: ${args.version} (${args.distTag})`);
@@ -609,7 +621,7 @@ export async function verifyBetaRelease(
           npmDistTag: args.distTag,
           pluginSelection: args.pluginSelection,
           openclawNpmIntegrity: openclawNpm.integrity,
-          githubReleaseUrl: releaseUrl,
+          githubReleaseUrl: releaseUrl ?? null,
           pluginNpmPackageCount: npmPlugins.length,
           clawHubPackageCount: clawHubPlugins.length,
           workflowRuns,

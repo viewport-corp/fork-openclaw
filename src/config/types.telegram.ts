@@ -1,3 +1,4 @@
+// Defines Telegram channel configuration types.
 import type {
   ChannelPreviewStreamingConfig,
   ChannelStreamingPreviewConfig,
@@ -14,7 +15,11 @@ import type {
   ChannelHealthMonitorConfig,
   ChannelHeartbeatVisibilityConfig,
 } from "./types.channel-health.js";
-import type { DmConfig, ProviderCommandsConfig } from "./types.messages.js";
+import type {
+  DmConfig,
+  MentionPatternsPolicyConfig,
+  ProviderCommandsConfig,
+} from "./types.messages.js";
 import type { GroupToolPolicyBySenderConfig, GroupToolPolicyConfig } from "./types.tools.js";
 
 export type TelegramActionConfig = {
@@ -166,6 +171,8 @@ export type TelegramAccountConfig = {
    * whenever bot-authored messages reach dispatch. See #58789 / #79077.
    */
   botLoopProtection?: ChannelBotLoopProtectionConfig;
+  /** Scope configured groupChat mentionPatterns to selected Telegram chat/thread IDs. */
+  mentionPatterns?: MentionPatternsPolicyConfig;
   /** Supplemental context visibility policy (all|allowlist|allowlist_quote). */
   contextVisibility?: ContextVisibilityMode;
   /** Max group messages to keep as history context (0 disables). */

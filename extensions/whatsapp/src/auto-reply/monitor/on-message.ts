@@ -1,3 +1,4 @@
+// Whatsapp plugin module implements on message behavior.
 import type { AckReactionHandle } from "openclaw/plugin-sdk/channel-feedback";
 import type { OpenClawConfig } from "openclaw/plugin-sdk/config-contracts";
 import type { getReplyFromConfig } from "openclaw/plugin-sdk/reply-runtime";
@@ -250,6 +251,7 @@ export function createWebOnMessageHandler(params: {
         agentId: route.agentId,
         sessionKey: route.sessionKey,
         baseMentionConfig,
+        providerMentionPatterns: account.mentionPatterns,
         authDir: account.authDir,
         selfChatMode: account.selfChatMode,
         groupHistories: params.groupHistories,
@@ -275,6 +277,7 @@ export function createWebOnMessageHandler(params: {
           agentId: route.agentId,
           sessionKey: route.sessionKey,
           baseMentionConfig,
+          providerMentionPatterns: account.mentionPatterns,
           authDir: account.authDir,
           selfChatMode: account.selfChatMode,
           groupHistories: params.groupHistories,

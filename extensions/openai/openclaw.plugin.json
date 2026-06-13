@@ -1,6 +1,5 @@
 {
   "id": "openai",
-  "legacyPluginIds": ["openai-codex"],
   "activation": {
     "onStartup": false
   },
@@ -209,7 +208,7 @@
       }
     },
     "discovery": {
-      "openai": "static"
+      "openai": "runtime"
     },
     "suppressions": [
       {

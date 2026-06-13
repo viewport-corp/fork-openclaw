@@ -1,3 +1,4 @@
+// Tests reply utility helpers for response normalization and send decisions.
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { getReplyPayloadMetadata, setReplyPayloadMetadata } from "../reply-payload.js";
 import { SILENT_REPLY_TOKEN } from "../tokens.js";
@@ -149,7 +150,7 @@ describe("normalizeReplyPayload", () => {
     expect(reply.channelData).toEqual(payload.channelData);
   });
 
-  it("records skip reasons for silent/empty payloads", () => {
+  it("records skip reasons for silent, empty, and internal artifact payloads", () => {
     const cases = [
       { name: "silent", payload: { text: SILENT_REPLY_TOKEN }, reason: "silent" },
       {
@@ -158,6 +159,21 @@ describe("normalizeReplyPayload", () => {
         reason: "silent",
       },
       { name: "empty", payload: { text: "   " }, reason: "empty" },
+      {
+        name: "internalArtifact <channel|>",
+        payload: { text: "<channel|>" },
+        reason: "silent",
+      },
+      {
+        name: "internalArtifact set-thought",
+        payload: { text: "set-thought <channel|>" },
+        reason: "silent",
+      },
+      {
+        name: "internalArtifact box-drawing separator",
+        payload: { text: "───" },
+        reason: "silent",
+      },
     ] as const;
     for (const testCase of cases) {
       const reasons: string[] = [];
@@ -769,7 +785,7 @@ describe("createTypingSignaler", () => {
     expect(typing.startTypingOnText).not.toHaveBeenCalled();
   });
 
-  it("handles tool-start typing before and after active text mode", async () => {
+  it("suppresses tool-start typing in message mode until renderable text arrives", async () => {
     const typing = createMockTypingController();
     const signaler = createTypingSignaler({
       typing,
@@ -777,34 +793,51 @@ describe("createTypingSignaler", () => {
       isHeartbeat: false,
     });
 
+    // Tool fires before any text — suppressed in message mode.
     await signaler.signalToolStart();
+    expect(typing.startTypingLoop).not.toHaveBeenCalled();
+    expect(typing.refreshTypingTtl).not.toHaveBeenCalled();
 
-    expect(typing.startTypingLoop).toHaveBeenCalledTimes(1);
-    expect(typing.refreshTypingTtl).toHaveBeenCalledTimes(1);
-    expect(typing.startTypingOnText).not.toHaveBeenCalled();
+    // Renderable text arrives — typing starts via startTypingOnText.
+    await signaler.signalTextDelta("hello");
+    expect(typing.startTypingOnText).toHaveBeenCalledTimes(1);
+
+    // Typing now active; subsequent tool calls keep TTL alive.
     (typing.isActive as ReturnType<typeof vi.fn>).mockReturnValue(true);
-    (typing.startTypingLoop as ReturnType<typeof vi.fn>).mockClear();
     (typing.refreshTypingTtl as ReturnType<typeof vi.fn>).mockClear();
     await signaler.signalToolStart();
-
     expect(typing.refreshTypingTtl).toHaveBeenCalledTimes(1);
     expect(typing.startTypingLoop).not.toHaveBeenCalled();
   });
 
+  it("starts typing on tool-start for instant and thinking modes", async () => {
+    for (const mode of ["instant", "thinking"] as const) {
+      const typing = createMockTypingController();
+      const signaler = createTypingSignaler({ typing, mode, isHeartbeat: false });
+
+      await signaler.signalToolStart();
+
+      expect(typing.startTypingLoop).toHaveBeenCalledTimes(1);
+      expect(typing.refreshTypingTtl).toHaveBeenCalledTimes(1);
+    }
+  });
+
   it("suppresses typing when disabled", async () => {
-    const typing = createMockTypingController();
-    const signaler = createTypingSignaler({
-      typing,
-      mode: "instant",
-      isHeartbeat: true,
-    });
+    const disabledCases = [
+      { mode: "instant" as const, isHeartbeat: true },
+      { mode: "never" as const, isHeartbeat: false },
+    ];
+    for (const params of disabledCases) {
+      const typing = createMockTypingController();
+      const signaler = createTypingSignaler({ typing, ...params });
 
-    await signaler.signalRunStart();
-    await signaler.signalTextDelta("hi");
-    await signaler.signalReasoningDelta();
+      await signaler.signalRunStart();
+      await signaler.signalTextDelta("hi");
+      await signaler.signalReasoningDelta();
 
-    expect(typing.startTypingLoop).not.toHaveBeenCalled();
-    expect(typing.startTypingOnText).not.toHaveBeenCalled();
+      expect(typing.startTypingLoop, `mode=${params.mode}`).not.toHaveBeenCalled();
+      expect(typing.startTypingOnText, `mode=${params.mode}`).not.toHaveBeenCalled();
+    }
   });
 });
 

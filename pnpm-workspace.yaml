@@ -17,7 +17,7 @@ minimumReleaseAgeExclude:
   - "basic-ftp"
   - "baileys@7.0.0-rc13"
   - "hono"
-  - "libopus-wasm@0.1.0"
+  - "libopus-wasm@0.2.0"
   - "libsignal@6.0.0"
   - "openclaw"
   - "protobufjs"
@@ -49,6 +49,10 @@ minimumReleaseAgeExclude:
   - "@smithy/shared-ini-file-loader@4.5.4"
   - "@typescript/native-preview*"
   - "@types/node"
+  # Temporary security-fix exception: esbuild 0.28.1 patches the current
+  # advisory but was published inside the 48h minimum-release-age window.
+  - "esbuild@0.28.1"
+  - "@esbuild/*"
   - "@rolldown/*"
   - "@oxlint/*"
   - "@oxfmt/*"
@@ -66,10 +70,16 @@ nodeLinker: hoisted
 blockExoticSubdeps: true
 
 overrides:
+  esbuild: 0.28.1
+  cliui: 6.0.0
+  wrap-ansi: 6.2.0
+  y18n: 4.0.3
+  yargs-parser: 18.1.3
   "@anthropic-ai/sdk": 0.100.1
   "@aws-sdk/core": 3.974.13
+  "@aws-sdk/credential-provider-node": 3.972.52
   "@aws-sdk/xml-builder": 3.972.25
-  hono: 4.12.18
+  hono: 4.12.21
   "@hono/node-server": 1.19.14
   axios: 1.16.0
   fast-uri: 3.1.2
