@@ -233,6 +233,19 @@ RUN --mount=type=cache,id=openclaw-bookworm-apt-cache,target=/var/cache/apt,shar
       python3 -m pip install --no-cache-dir --break-system-packages $OPENCLAW_IMAGE_PIP_PACKAGES; \
     fi
 
+# Install agent CLI toolbox globally (Viewport: claude + gemini; codex ships
+# as a bundled extension). Globals land in /usr/local/bin so the non-root
+# `node` user can invoke them without npm global writes. Versions are
+# intentionally unpinned, mirroring the apt/pip layers above: agent CLIs
+# release daily and updates flow in via image rebuilds.
+# Override with: docker build --build-arg OPENCLAW_IMAGE_NPM_PACKAGES="..." .
+# Set to an empty string to skip the layer entirely.
+ARG OPENCLAW_IMAGE_NPM_PACKAGES="@anthropic-ai/claude-code @google/gemini-cli"
+RUN if [ -n "$OPENCLAW_IMAGE_NPM_PACKAGES" ]; then \
+      npm install -g --no-fund --no-audit $OPENCLAW_IMAGE_NPM_PACKAGES && \
+      npm cache clean --force; \
+    fi
+
 # Optionally install Chromium and Xvfb for browser automation.
 # Build with: docker build --build-arg OPENCLAW_INSTALL_BROWSER=1 ...
 # Adds ~300MB but eliminates the 60-90s Playwright install on every container start.
@@ -301,8 +314,10 @@ RUN install -d -m 0755 -o node -g node /home/node/.config && \
     install -d -m 0700 -o node -g node \
       /home/node/.openclaw \
       /home/node/.openclaw/workspace \
+      /home/node/.claude \
       /home/node/.config/openclaw && \
     stat -c '%U:%G %a' /home/node/.openclaw | grep -qx 'node:node 700' && \
+    stat -c '%U:%G %a' /home/node/.claude | grep -qx 'node:node 700' && \
     stat -c '%U:%G %a' /home/node/.openclaw/workspace | grep -qx 'node:node 700' && \
     stat -c '%U:%G %a' /home/node/.config | grep -qx 'node:node 755' && \
     stat -c '%U:%G %a' /home/node/.config/openclaw | grep -qx 'node:node 700'

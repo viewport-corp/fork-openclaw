@@ -23,6 +23,7 @@ services:
       - /srv/viewport:/srv/viewport
       - /opt/platformx:/opt/platformx
       - /srv/viewport/runtime/openclaw-fresh/ssh:/home/node/.ssh:ro
+      - /srv/viewport/runtime/openclaw-fresh/claude-home:/home/node/.claude
     group_add:
       - "${DOCKER_GID:-999}"
 
@@ -48,5 +49,6 @@ services:
       - /srv/viewport:/srv/viewport
       - /opt/platformx:/opt/platformx
       - /srv/viewport/runtime/openclaw-fresh/ssh:/home/node/.ssh:ro
+      - /srv/viewport/runtime/openclaw-fresh/claude-home:/home/node/.claude
     group_add:
       - "${DOCKER_GID:-999}"
