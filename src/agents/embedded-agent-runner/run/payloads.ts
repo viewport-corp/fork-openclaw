@@ -1,3 +1,6 @@
+/**
+ * Builds embedded-agent payload objects from attempt inputs and outcomes.
+ */
 import {
   normalizeOptionalLowercaseString,
   normalizeOptionalString,
@@ -27,6 +30,7 @@ import {
   BILLING_ERROR_USER_MESSAGE,
   formatAssistantErrorText,
   formatRawAssistantErrorForUi,
+  formatUserFacingAssistantErrorText,
   getApiErrorPayloadFingerprint,
   isRawApiErrorPayload,
   normalizeTextForComparison,
@@ -127,14 +131,22 @@ function normalizeReplyTextForComparison(text: string): string {
 function shouldIncludeToolErrorDetails(params: {
   lastToolError: ToolErrorSummary;
   isCronTrigger?: boolean;
+  isHeartbeatTrigger?: boolean;
   sessionKey: string;
   verboseLevel?: VerboseLevel;
 }): boolean {
   if (isVerboseToolDetailEnabled(params.verboseLevel)) {
     return true;
   }
+  if (!isExecLikeToolName(params.lastToolError.toolName)) {
+    return false;
+  }
+  // Heartbeat runs usually have no assistant reply to carry the command
+  // output, so keep exec details in the warning instead of a generic label.
+  if (params.isHeartbeatTrigger === true) {
+    return true;
+  }
   return (
-    isExecLikeToolName(params.lastToolError.toolName) &&
     params.lastToolError.timedOut === true &&
     (params.isCronTrigger === true || isCronSessionKey(params.sessionKey))
   );
@@ -144,6 +156,11 @@ function shouldMarkNonTerminalToolErrorWarning(lastToolError: ToolErrorSummary):
   return lastToolError.middlewareError === true;
 }
 
+/**
+ * Chooses whether a tool failure needs a separate user-visible warning and
+ * whether to include raw details. Mutating failures are stricter because a
+ * silent failed write/send/delete can make the assistant look successful.
+ */
 function resolveToolErrorWarningPolicy(params: {
   lastToolError: ToolErrorSummary;
   hasUserFacingReply: boolean;
@@ -152,6 +169,7 @@ function resolveToolErrorWarningPolicy(params: {
   suppressToolErrors: boolean;
   suppressToolErrorWarnings?: boolean | (() => boolean | undefined);
   isCronTrigger?: boolean;
+  isHeartbeatTrigger?: boolean;
   sessionKey: string;
   verboseLevel?: VerboseLevel;
 }): ToolErrorWarningPolicy {
@@ -198,14 +216,22 @@ function resolveToolErrorWarningPolicy(params: {
   };
 }
 
+/**
+ * Converts a completed embedded attempt into reply payloads for channels. This
+ * is the boundary that suppresses duplicate source replies, filters raw API
+ * errors, preserves directive metadata, and decides when tool failures must be
+ * surfaced to the user.
+ */
 export function buildEmbeddedRunPayloads(params: {
   assistantTexts: string[];
+  assistantMessageIndex?: number;
   toolMetas: ToolMetaEntry[];
   lastAssistant: AssistantMessage | undefined;
   currentAssistant?: AssistantMessage | null;
   lastToolError?: ToolErrorSummary;
   config?: OpenClawConfig;
   isCronTrigger?: boolean;
+  isHeartbeatTrigger?: boolean;
   sessionKey: string;
   provider?: string;
   model?: string;
@@ -216,6 +242,7 @@ export function buildEmbeddedRunPayloads(params: {
   suppressToolErrorWarnings?: boolean | (() => boolean | undefined);
   inlineToolResultsAllowed: boolean;
   didSendViaMessagingTool?: boolean;
+  didDeliverSourceReplyViaMessageTool?: boolean;
   messagingToolSourceReplyPayloads?: MessagingToolSourceReplyPayload[];
   sourceReplyDeliveryMode?: SourceReplyDeliveryMode;
   agentId?: string;
@@ -266,6 +293,8 @@ export function buildEmbeddedRunPayloads(params: {
     ) {
       return;
     }
+    // Message-tool-only replies were already sent by the tool. Mirror them into
+    // the transcript while marking payloads so channel delivery suppresses a duplicate send.
     replyItems.push({
       text,
       ...(payload.mediaUrl ? { mediaUrl: payload.mediaUrl } : {}),
@@ -282,10 +311,15 @@ export function buildEmbeddedRunPayloads(params: {
     });
   });
   const hasSourceReplyPayload = replyItems.length > sourceReplyStartIndex;
+  const deliveredSourceReplyViaMessageTool =
+    params.sourceReplyDeliveryMode === "message_tool_only" &&
+    params.didDeliverSourceReplyViaMessageTool === true;
 
   const useMarkdown = params.toolResultFormat === "markdown";
   const suppressAssistantArtifacts =
-    params.didSendDeterministicApprovalPrompt === true || hasSourceReplyPayload;
+    params.didSendDeterministicApprovalPrompt === true ||
+    hasSourceReplyPayload ||
+    deliveredSourceReplyViaMessageTool;
   const nonEmptyAssistantTexts = params.assistantTexts.filter((text) => text.trim().length > 0);
   const currentAssistant = params.currentAssistant ?? undefined;
   const assistantForPayload =
@@ -295,20 +329,27 @@ export function buildEmbeddedRunPayloads(params: {
   const lastAssistantAborted = lastAssistantStopReason === "aborted";
   const runAborted = params.runAborted === true || lastAssistantAborted;
   const lastAssistantNeedsErrorSurface = lastAssistantErrored || lastAssistantAborted;
+  const rawErrorMessage = lastAssistantNeedsErrorSurface
+    ? normalizeOptionalString(assistantForPayload?.errorMessage)
+    : undefined;
   const errorText =
     assistantForPayload && lastAssistantNeedsErrorSurface
       ? suppressAssistantArtifacts
         ? undefined
-        : formatAssistantErrorText(assistantForPayload, {
-            cfg: params.config,
-            sessionKey: params.sessionKey,
-            provider: params.provider,
-            model: params.model,
-          })
+        : lastAssistantErrored || rawErrorMessage
+          ? formatUserFacingAssistantErrorText(assistantForPayload, {
+              cfg: params.config,
+              sessionKey: params.sessionKey,
+              provider: params.provider,
+              model: params.model,
+            })
+          : formatAssistantErrorText(assistantForPayload, {
+              cfg: params.config,
+              sessionKey: params.sessionKey,
+              provider: params.provider,
+              model: params.model,
+            })
       : undefined;
-  const rawErrorMessage = lastAssistantNeedsErrorSurface
-    ? normalizeOptionalString(assistantForPayload?.errorMessage)
-    : undefined;
   const rawErrorFingerprint = rawErrorMessage
     ? getApiErrorPayloadFingerprint(rawErrorMessage)
     : null;
@@ -433,6 +474,8 @@ export function buildEmbeddedRunPayloads(params: {
       (!assistantTextsHaveMedia &&
         normalizedAssistantTexts.length > 0 &&
         normalizedAssistantTexts === normalizedRawAnswerText));
+  // When streamed text lost media directives but the canonical assistant answer
+  // still contains them, keep the raw answer so attachments are not dropped.
   const fallbackAnswerSourceText =
     shouldPreferRawAnswerText && fallbackRawAnswerText ? fallbackRawAnswerText : fallbackAnswerText;
   const normalizedFallbackAnswerSourceText = fallbackAnswerSourceText
@@ -495,6 +538,7 @@ export function buildEmbeddedRunPayloads(params: {
       suppressToolErrors: Boolean(params.config?.messages?.suppressToolErrors),
       suppressToolErrorWarnings: params.suppressToolErrorWarnings,
       isCronTrigger: params.isCronTrigger,
+      isHeartbeatTrigger: params.isHeartbeatTrigger,
       sessionKey: params.sessionKey,
       verboseLevel: params.verboseLevel,
     });
@@ -555,6 +599,11 @@ export function buildEmbeddedRunPayloads(params: {
           nonTerminalToolErrorWarning: true,
         });
       }
+      if (!item.isError && !item.isReasoning && params.assistantMessageIndex !== undefined) {
+        setReplyPayloadMetadata(payload, {
+          assistantMessageIndex: params.assistantMessageIndex,
+        });
+      }
       if (item.replyToId) {
         payload.replyToId = item.replyToId;
       }
@@ -577,6 +626,7 @@ export function buildEmbeddedRunPayloads(params: {
         payload.channelData = item.channelData;
       }
       if (item.sourceReplyMirror) {
+        // Source-reply mirrors are transcript artifacts, not channel sends.
         markReplyPayloadForSourceSuppressionDelivery(payload);
         if (params.sessionKey) {
           const sourceReplyTranscriptMirror: NonNullable<

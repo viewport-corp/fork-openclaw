@@ -1,3 +1,6 @@
+/**
+ * Shared types for preparing and executing CLI-backed agent runs.
+ */
 import type { SourceReplyDeliveryMode } from "../../auto-reply/get-reply-options.types.js";
 import type { ReplyOperation } from "../../auto-reply/reply/reply-run-registry.js";
 import type { ThinkLevel } from "../../auto-reply/thinking.js";
@@ -18,6 +21,7 @@ import type { SkillSnapshot } from "../../skills/types.js";
 import type { BootstrapContextMode } from "../bootstrap-files.js";
 import type { ResolvedCliBackend } from "../cli-backends.js";
 import type { ContextWindowInfo } from "../context-window-guard.js";
+import type { FailoverReason } from "../embedded-agent-helpers.js";
 import type { EmbeddedAgentExecutionPhase } from "../embedded-agent-runner/execution-phase.js";
 import type {
   CurrentInboundPromptContext,
@@ -25,6 +29,7 @@ import type {
 } from "../embedded-agent-runner/run/params.js";
 import type { SilentReplyPromptMode } from "../system-prompt.types.js";
 
+/** Input contract for one CLI-backed agent run. */
 export type RunCliAgentParams = {
   sessionId: string;
   sessionKey?: string;
@@ -48,12 +53,18 @@ export type RunCliAgentParams = {
   model?: string;
   thinkLevel?: ThinkLevel;
   timeoutMs: number;
+  /**
+   * Explicit run timeout, in milliseconds, when the caller can distinguish a
+   * deliberate timeout override from the inherited agent default.
+   */
+  runTimeoutOverrideMs?: number;
   runId: string;
   lane?: string;
   jobId?: string;
   extraSystemPrompt?: string;
   sourceReplyDeliveryMode?: SourceReplyDeliveryMode;
   silentReplyPromptMode?: SilentReplyPromptMode;
+  allowEmptyAssistantReplyAsSilent?: boolean;
   /** Static portion of extraSystemPrompt (excluding per-message inbound metadata) for session reuse hashing. */
   extraSystemPromptStatic?: string;
   streamParams?: import("../command/types.js").AgentStreamParams;
@@ -61,6 +72,11 @@ export type RunCliAgentParams = {
   cliSessionId?: string;
   cliSessionBinding?: CliSessionBinding;
   authProfileId?: string;
+  onBeforeFreshCliSessionRetry?: (params: {
+    provider: string;
+    reason: FailoverReason;
+    sessionId: string;
+  }) => boolean | Promise<boolean>;
   bootstrapPromptWarningSignaturesSeen?: string[];
   bootstrapPromptWarningSignature?: string;
   bootstrapContextMode?: BootstrapContextMode;
@@ -73,7 +89,10 @@ export type RunCliAgentParams = {
   currentChannelId?: string;
   currentThreadTs?: string;
   currentMessageId?: string | number;
+  currentInboundAudio?: boolean;
   agentAccountId?: string;
+  /** Sender identity for channel-originated runs when available. */
+  senderId?: string | null;
   /** Trusted sender identity bit for channel action auth. */
   senderIsOwner?: boolean;
   /** Runtime tool allow-list. CLI harnesses fail closed when this is set. */
@@ -90,6 +109,7 @@ export type RunCliAgentParams = {
     firstModelCallStarted?: boolean;
   }) => void;
   replyOperation?: ReplyOperation;
+  emitCommentaryText?: boolean;
   /**
    * Close any long-lived CLI live session created for this run after the run
    * finishes. Intended for temporary helper calls that should not keep process
@@ -104,6 +124,7 @@ export type RunCliAgentParams = {
   cleanupBundleMcpOnRunEnd?: boolean;
 };
 
+/** Backend config after MCP, skill, env, and cleanup preparation. */
 export type CliPreparedBackend = {
   backend: CliBackendConfig;
   cleanup?: () => Promise<void>;
@@ -112,6 +133,7 @@ export type CliPreparedBackend = {
   env?: Record<string, string>;
 };
 
+/** Reusable CLI session id and the reason it was rejected, when any. */
 export type CliReusableSession = {
   sessionId?: string;
   invalidatedReason?:
@@ -124,6 +146,7 @@ export type CliReusableSession = {
     | "orphaned-tool-use";
 };
 
+/** Fully prepared execution context consumed by the CLI runner executor. */
 export type PreparedCliRunContext = {
   params: RunCliAgentParams;
   effectiveAuthProfileId?: string;

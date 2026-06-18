@@ -1,3 +1,4 @@
+// Verifies session config cache invalidation and reload behavior.
 import fs from "node:fs";
 import path from "node:path";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
@@ -315,7 +316,7 @@ describe("Session Store Cache", () => {
       throw new Error("Expected cached entry");
     }
     expect(entry?.polluted).toBeUndefined();
-    expect(Object.hasOwn(entry as SessionEntry, "__proto__")).toBe(true);
+    expect(Object.hasOwn(entry as object, "__proto__")).toBe(true);
     expect(Object.prototype).not.toHaveProperty("polluted");
   });
 

@@ -1,3 +1,4 @@
+// Vitest project config tests validate aggregate Vitest project wiring.
 import { afterEach, describe, expect, it } from "vitest";
 import { createPatternFileHelper } from "./helpers/pattern-file.js";
 import { normalizeConfigPath, normalizeConfigPaths } from "./helpers/vitest-config-paths.js";
@@ -81,6 +82,19 @@ describe("projects vitest config", () => {
         "test/vitest/vitest.extension-media.config.ts",
         "test/vitest/vitest.extension-misc.config.ts",
       ]),
+    );
+  });
+
+  it("keeps root watch projects aligned with dedicated tooling shard lanes", () => {
+    const toolingShard = fullSuiteVitestShards.find(
+      (shard) => shard.config === "test/vitest/vitest.full-core-tooling.config.ts",
+    );
+
+    expect(toolingShard?.projects).toEqual(
+      expect.arrayContaining(["test/vitest/vitest.tooling-docker.config.ts"]),
+    );
+    expect(rootVitestProjects).toEqual(
+      expect.arrayContaining(["test/vitest/vitest.tooling-docker.config.ts"]),
     );
   });
 
@@ -232,6 +246,7 @@ describe("projects vitest config", () => {
     expect(normalizeConfigPath(config.test.runner)).toBe("test/non-isolated-runner.ts");
     expect(config.test.fileParallelism).toBe(false);
     expect(config.test.maxWorkers).toBe(1);
+    expect(config.test.sequence).toMatchObject({ groupOrder: 1 });
   });
 
   it("keeps the bundled lane on thread workers with the non-isolated runner", () => {

@@ -1,3 +1,4 @@
+// Bundled shape guard tests cover bundled channel package metadata and export shape.
 import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
@@ -197,7 +198,7 @@ describe("bundled channel entry shape guards", () => {
   const bundledPluginRoots = listSourceBundledPluginRoots();
   let realBundledSourceTreeProbe: {
     hasAccountInspect: boolean;
-    pluginIds: string[];
+    pluginIds: readonly string[];
   };
 
   beforeAll(async () => {
