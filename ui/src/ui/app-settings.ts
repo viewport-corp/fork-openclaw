@@ -1,3 +1,4 @@
+// Control UI module implements app settings behavior.
 import { roleScopesAllow } from "../../../src/shared/operator-scope-compat.js";
 import { t } from "../i18n/index.ts";
 import { refreshChat } from "./app-chat.ts";
@@ -52,10 +53,18 @@ import {
 import { loadNodes, type NodesState } from "./controllers/nodes.ts";
 import { loadPresence, type PresenceState } from "./controllers/presence.ts";
 import { loadSessions, type SessionsState } from "./controllers/sessions.ts";
-import { loadSkills, type SkillsState } from "./controllers/skills.ts";
+import {
+  loadSkillWorkshopProposals,
+  type SkillWorkshopState,
+} from "./controllers/skill-workshop.ts";
+import { loadSkills, reconcileSkillsAgentId, type SkillsState } from "./controllers/skills.ts";
 import { loadUsage, type UsageState } from "./controllers/usage.ts";
-import { loadWorkboard } from "./controllers/workboard.ts";
-import { resolveCronJobLastRunStatus } from "./cron-status.ts";
+import {
+  loadWorkboard,
+  stopWorkboardLifecycleRefresh,
+  stopWorkboardPolling,
+} from "./controllers/workboard.ts";
+import { isCronJobActiveFailure } from "./cron-status.ts";
 import { syncCustomThemeStyleTag } from "./custom-theme.ts";
 import { isMonitoredAuthProvider } from "./model-auth-helpers.ts";
 import {
@@ -152,6 +161,7 @@ type SettingsAppHost = SettingsHost &
   PresenceState &
   SessionsState &
   SkillsState &
+  SkillWorkshopState &
   ModelAuthStatusState &
   UsageState & {
     overviewLogCursor: number | null;
@@ -411,7 +421,7 @@ function loadConfigSchemaAfterPrimary(
   );
 }
 
-export async function refreshActiveTab(host: SettingsHost) {
+export async function refreshActiveTab(host: SettingsHost, opts?: { chatStartup?: boolean }) {
   const app = host as unknown as SettingsAppHost;
   const refreshRun = beginControlUiRefresh(host, host.tab);
   try {
@@ -420,6 +430,7 @@ export async function refreshActiveTab(host: SettingsHost) {
       case "communications":
       case "appearance":
       case "automation":
+      case "mcp":
       case "infrastructure":
       case "aiAgents":
         {
@@ -443,6 +454,7 @@ export async function refreshActiveTab(host: SettingsHost) {
             client: app.client,
             force: true,
             requestUpdate: host.requestUpdate,
+            refreshDiagnostics: hasOperatorWriteAccess(app.hello?.auth ?? null),
           }),
         ]);
         break;
@@ -462,7 +474,12 @@ export async function refreshActiveTab(host: SettingsHost) {
         await loadCron(host);
         break;
       case "skills":
+        await loadAgents(app);
+        reconcileSkillsAgentId(app, app.agentsList);
         await loadSkills(app);
+        break;
+      case "skillWorkshop":
+        await loadSkillWorkshopProposals(app, { force: true });
         break;
       case "agents":
         await refreshAgentsTab(host, app);
@@ -482,13 +499,18 @@ export async function refreshActiveTab(host: SettingsHost) {
         ]);
         break;
       case "chat": {
-        const modelAuthRefresh = loadModelAuthStatusState(app).catch(() => undefined);
-        await refreshChat(host as unknown as Parameters<typeof refreshChat>[0]);
-        scheduleChatScroll(
-          host as unknown as Parameters<typeof scheduleChatScroll>[0],
-          !host.chatHasAutoScrolled,
-        );
-        void modelAuthRefresh;
+        try {
+          await refreshChat(host as unknown as Parameters<typeof refreshChat>[0], {
+            awaitHistory: opts?.chatStartup === true,
+            startup: opts?.chatStartup === true,
+          });
+          scheduleChatScroll(
+            host as unknown as Parameters<typeof scheduleChatScroll>[0],
+            !host.chatHasAutoScrolled,
+          );
+        } finally {
+          void loadModelAuthStatusState(app).catch(() => undefined);
+        }
         break;
       }
       case "debug":
@@ -694,6 +716,12 @@ function applyTabSelection(
   (next === "debug" ? startDebugPolling : stopDebugPolling)(
     host as unknown as Parameters<typeof startDebugPolling>[0],
   );
+  if (next !== "workboard") {
+    stopWorkboardPolling(host as unknown as Parameters<typeof stopWorkboardPolling>[0]);
+    stopWorkboardLifecycleRefresh(
+      host as unknown as Parameters<typeof stopWorkboardLifecycleRefresh>[0],
+    );
+  }
 
   if (options.refreshPolicy === "always" || host.connected) {
     void refreshActiveTab(host);
@@ -815,6 +843,19 @@ export function hasOperatorWriteAccess(
   });
 }
 
+export function hasOperatorAdminAccess(
+  auth: { role?: string; scopes?: readonly string[] } | null,
+): boolean {
+  if (!auth?.scopes) {
+    return true;
+  }
+  return roleScopesAllow({
+    role: auth.role ?? "operator",
+    requestedScopes: ["operator.admin"],
+    allowedScopes: auth.scopes,
+  });
+}
+
 export function hasMissingSkillDependencies(
   missing: Record<string, unknown> | null | undefined,
 ): boolean {
@@ -900,7 +941,7 @@ function buildAttentionItems(host: SettingsAppHost) {
   }
 
   const cronJobs = host.cronJobs ?? [];
-  const failedCron = cronJobs.filter((j) => resolveCronJobLastRunStatus(j) === "error");
+  const failedCron = cronJobs.filter(isCronJobActiveFailure);
   if (failedCron.length > 0) {
     items.push({
       severity: "error",

@@ -1,4 +1,9 @@
+// Implements ACP lifecycle commands for start, stop, reset, and resume.
 import { randomUUID } from "node:crypto";
+import {
+  resolveAcpSessionCwd,
+  resolveAcpThreadSessionDetailLines,
+} from "@openclaw/acp-core/runtime/session-identifiers";
 import { normalizeOptionalString } from "@openclaw/normalization-core/string-coerce";
 import { getAcpSessionManager } from "../../../acp/control-plane/manager.js";
 import { resolveAcpSessionResolutionError } from "../../../acp/control-plane/manager.utils.js";
@@ -12,10 +17,6 @@ import {
   resolveAcpDispatchPolicyError,
   resolveAcpDispatchPolicyMessage,
 } from "../../../acp/policy.js";
-import {
-  resolveAcpSessionCwd,
-  resolveAcpThreadSessionDetailLines,
-} from "../../../acp/runtime/session-identifiers.js";
 import {
   resolveAcpSpawnRuntimePolicyError,
   resolveRuntimeCwdForAcpSpawn,
@@ -35,7 +36,7 @@ import {
   resolveThreadBindingPlacementForCurrentContext,
   resolveThreadBindingSpawnPolicy,
 } from "../../../channels/thread-bindings-policy.js";
-import { updateSessionStore } from "../../../config/sessions.js";
+import { updateSessionEntry } from "../../../config/sessions/session-accessor.js";
 import type { SessionAcpMeta } from "../../../config/sessions/types.js";
 import type { OpenClawConfig } from "../../../config/types.openclaw.js";
 import { formatErrorMessage } from "../../../infra/errors.js";
@@ -473,17 +474,16 @@ async function persistSpawnedSessionLabel(params: {
   if (!params.commandParams.storePath) {
     return;
   }
-  await updateSessionStore(params.commandParams.storePath, (store) => {
-    const existing = store[params.sessionKey];
-    if (!existing) {
-      return;
-    }
-    store[params.sessionKey] = {
-      ...existing,
+  await updateSessionEntry(
+    {
+      storePath: params.commandParams.storePath,
+      sessionKey: params.sessionKey,
+    },
+    () => ({
       label,
       updatedAt: now,
-    };
-  });
+    }),
+  );
 }
 
 export async function handleAcpSpawnAction(
@@ -542,7 +542,7 @@ export async function handleAcpSpawnAction(
     );
   }
 
-  let initializedBackend = "";
+  let initializedBackend;
   let initializedMeta: SessionAcpMeta | undefined;
   let initializedRuntime: AcpSpawnRuntimeCloseHandle | undefined;
   try {
@@ -860,7 +860,7 @@ export async function handleAcpCloseAction(
     commandParams: params,
     restTokens,
     run: async ({ acpManager, sessionKey }) => {
-      let runtimeNotice = "";
+      let runtimeNotice;
       try {
         const closed = await acpManager.closeSession({
           cfg: params.cfg,

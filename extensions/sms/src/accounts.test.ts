@@ -1,3 +1,4 @@
+// Sms tests cover accounts plugin behavior.
 import { afterEach, describe, expect, it } from "vitest";
 import { listSmsAccountIds, resolveSmsAccount } from "./accounts.js";
 import { SmsConfigSchema } from "./config-schema.js";
@@ -77,6 +78,24 @@ describe("SMS account config", () => {
       fromNumber: "+15551112222",
       webhookPath: "/webhooks/sms/support",
       dmPolicy: "allowlist",
+      allowFrom: ["+15553334444"],
+    });
+  });
+
+  it("normalizes numeric allowFrom entries accepted by config schema", () => {
+    const cfg = {
+      channels: {
+        sms: {
+          accountSid: "AC-parent",
+          authToken: "parent-token",
+          fromNumber: "+15550000000",
+          allowFrom: [1_555_333_4444],
+        },
+      },
+    };
+
+    expect(SmsConfigSchema.parse(cfg.channels.sms).allowFrom).toEqual([1_555_333_4444]);
+    expect(resolveSmsAccount(cfg)).toMatchObject({
       allowFrom: ["+15553334444"],
     });
   });
@@ -166,6 +185,19 @@ describe("SMS account config", () => {
       dangerouslyDisableSignatureValidation: false,
       allowFrom: [],
       textChunkLimit: 1500,
+    });
+  });
+
+  it("coerces numeric allowFrom entries accepted by the config schema", () => {
+    const parsed = SmsConfigSchema.parse({
+      accountSid: "AC123",
+      authToken: "token",
+      fromNumber: "+15550001111",
+      allowFrom: [15551234567],
+    });
+
+    expect(resolveSmsAccount({ channels: { sms: parsed } })).toMatchObject({
+      allowFrom: ["+15551234567"],
     });
   });
 

@@ -1,3 +1,4 @@
+// Plugin state SQLite helpers persist plugin state in the OpenClaw state database.
 import type { DatabaseSync } from "node:sqlite";
 import { resolveExpiresAtMsFromDurationMs } from "@openclaw/normalization-core/number-coercion";
 import type { Insertable, Selectable } from "kysely";
@@ -7,6 +8,7 @@ import {
   getNodeSqliteKysely,
 } from "../infra/kysely-sync.js";
 import { requireNodeSqlite } from "../infra/node-sqlite.js";
+import { normalizeSqliteNumber } from "../infra/sqlite-number.js";
 import type { DB as OpenClawStateKyselyDatabase } from "../state/openclaw-state-db.generated.js";
 import {
   closeOpenClawStateDatabase,
@@ -54,13 +56,6 @@ type PluginStateSeedEntryForTests = {
 };
 
 let cachedDatabase: PluginStateDatabase | null = null;
-
-function normalizeNumber(value: number | bigint | null): number | undefined {
-  if (typeof value === "bigint") {
-    return Number(value);
-  }
-  return typeof value === "number" ? value : undefined;
-}
 
 function createPluginStateError(params: {
   code: PluginStateStoreErrorCode;
@@ -135,11 +130,11 @@ function rowToEntry(
   row: PluginStateRow,
   operation: PluginStateStoreOperation,
 ): PluginStateEntry<unknown> {
-  const expiresAt = normalizeNumber(row.expires_at);
+  const expiresAt = normalizeSqliteNumber(row.expires_at);
   return {
     key: row.entry_key,
     value: parseStoredJson(row.value_json, operation),
-    createdAt: normalizeNumber(row.created_at) ?? 0,
+    createdAt: normalizeSqliteNumber(row.created_at) ?? 0,
     ...(expiresAt != null ? { expiresAt } : {}),
   };
 }
@@ -552,6 +547,75 @@ export function pluginStateRegisterIfAbsent(params: {
   }
 }
 
+export function pluginStateUpdate(params: {
+  pluginId: string;
+  namespace: string;
+  key: string;
+  maxEntries: number;
+  updateValueJson: (current: unknown) => { valueJson: string; ttlMs?: number } | undefined;
+  env?: NodeJS.ProcessEnv;
+}): boolean {
+  try {
+    return runWriteTransaction(
+      "register",
+      (store) => {
+        const now = Date.now();
+        deleteExpiredPluginStateNamespaceEntries(store.db, {
+          pluginId: params.pluginId,
+          namespace: params.namespace,
+          now,
+        });
+        const existing = selectPluginStateEntry(store.db, {
+          pluginId: params.pluginId,
+          namespace: params.namespace,
+          key: params.key,
+          now,
+        });
+        const next = params.updateValueJson(
+          existing ? parseStoredJson(existing.value_json, "lookup") : undefined,
+        );
+        if (!next) {
+          return false;
+        }
+        const expiresAt = resolvePluginStateExpiresAtMs({
+          ttlMs: next.ttlMs,
+          now,
+          operation: "register",
+          path: store.path,
+        });
+        upsertPluginStateEntry(
+          store.db,
+          bindPluginStateEntry({
+            pluginId: params.pluginId,
+            namespace: params.namespace,
+            key: params.key,
+            valueJson: next.valueJson,
+            createdAt: now,
+            expiresAt,
+          }),
+        );
+        enforcePostRegisterLimits({
+          store,
+          pluginId: params.pluginId,
+          namespace: params.namespace,
+          maxEntries: params.maxEntries,
+          now,
+          protectedKey: params.key,
+        });
+        return true;
+      },
+      envOptions(params.env),
+    );
+  } catch (error) {
+    throw wrapPluginStateError(
+      error,
+      "register",
+      "PLUGIN_STATE_WRITE_FAILED",
+      "Failed to update plugin state entry.",
+    );
+  }
+}
+
 export function pluginStateLookup(params: {
   pluginId: string;
   namespace: string;
@@ -849,5 +913,3 @@ export function closePluginStateDatabase(): void {
   cachedDatabase = null;
   closeOpenClawStateDatabase();
 }
-
-export const closePluginStateSqliteStore = closePluginStateDatabase;

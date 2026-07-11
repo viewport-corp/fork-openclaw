@@ -1,3 +1,4 @@
+// Defines Telegram channel configuration types.
 import type {
   ChannelPreviewStreamingConfig,
   ChannelStreamingPreviewConfig,
@@ -9,12 +10,15 @@ import type {
   ReplyToMode,
   SessionThreadBindingsConfig,
 } from "./types.base.js";
-import type { ChannelBotLoopProtectionConfig } from "./types.bot-loop-protection.js";
 import type {
   ChannelHealthMonitorConfig,
   ChannelHeartbeatVisibilityConfig,
 } from "./types.channel-health.js";
-import type { DmConfig, ProviderCommandsConfig } from "./types.messages.js";
+import type {
+  DmConfig,
+  MentionPatternsPolicyConfig,
+  ProviderCommandsConfig,
+} from "./types.messages.js";
 import type { GroupToolPolicyBySenderConfig, GroupToolPolicyConfig } from "./types.tools.js";
 
 export type TelegramActionConfig = {
@@ -63,16 +67,10 @@ export type TelegramNetworkConfig = {
 export type TelegramInlineButtonsScope = "off" | "dm" | "group" | "all" | "allowlist";
 export type TelegramStreamingMode = "off" | "partial" | "block" | "progress";
 export type TelegramExecApprovalTarget = "dm" | "channel" | "both";
-
-export type TelegramStreamingPreviewConfig = ChannelStreamingPreviewConfig & {
-  /** Use Telegram-native ephemeral draft UI for DM preview tool progress. */
-  nativeToolProgress?: boolean;
-  /** Telegram sender/user IDs allowed to use native DM preview tool progress. */
-  nativeToolProgressAllowFrom?: Array<string | number>;
-};
+export type TelegramGroupHistoryContextMode = "none" | "mention-only" | "recent";
 
 export type TelegramPreviewStreamingConfig = Omit<ChannelPreviewStreamingConfig, "preview"> & {
-  preview?: TelegramStreamingPreviewConfig;
+  preview?: ChannelStreamingPreviewConfig;
 };
 
 export type TelegramExecApprovalConfig = {
@@ -153,21 +151,12 @@ export type TelegramAccountConfig = {
    * - "allowlist": only allow group messages from senders in groupAllowFrom/allowFrom
    */
   groupPolicy?: GroupPolicy;
-  /**
-   * Process inbound messages authored by other bots (Telegram Bot API 10.0
-   * bot-to-bot mode). Default: true — Telegram only delivers bot messages
-   * after Bot-to-Bot Communication Mode is enabled in BotFather, and bot
-   * senders still pass the regular allowFrom/group gating. Set false to drop
-   * all bot-authored messages.
-   */
-  allowBots?: boolean;
-  /**
-   * Sliding-window guard that suppresses runaway two-bot exchanges. Default on
-   * whenever bot-authored messages reach dispatch. See #58789 / #79077.
-   */
-  botLoopProtection?: ChannelBotLoopProtectionConfig;
+  /** Scope configured groupChat mentionPatterns to selected Telegram chat/thread IDs. */
+  mentionPatterns?: MentionPatternsPolicyConfig;
   /** Supplemental context visibility policy (all|allowlist|allowlist_quote). */
   contextVisibility?: ContextVisibilityMode;
+  /** Controls prior Telegram group messages included in prompt context. Default: mention-only. */
+  includeGroupHistoryContext?: TelegramGroupHistoryContextMode;
   /** Max group messages to keep as history context (0 disables). */
   historyLimit?: number;
   /** Max DM turns to keep as history context. */
@@ -176,6 +165,15 @@ export type TelegramAccountConfig = {
   dms?: Record<string, DmConfig>;
   /** Outbound text chunk size (chars). Default: 4000. */
   textChunkLimit?: number;
+  /**
+   * Use Telegram Bot API 10.1 rich messages for text sends and edits.
+   * When false (default), falls back to HTML/plain text formatting via sendMessage.
+   * Set to true to enable native tables, details, and rich media via sendRichMessage.
+   * Note: Some Telegram clients (Web, Desktop, older mobile) do NOT support
+   * sendRichMessage and will show "This message is not supported" errors.
+   * Default: false.
+   */
+  richMessages?: boolean;
   /** Streaming + chunking settings. Prefer this nested shape over legacy flat keys. */
   streaming?: TelegramPreviewStreamingConfig;
   mediaMaxMb?: number;

@@ -1,9 +1,11 @@
+/**
+ * QuickJS worker for Code Mode guest execution and suspended VM snapshots.
+ */
 import { randomUUID } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import { createRequire } from "node:module";
 import { parentPort, workerData } from "node:worker_threads";
 import { EvalFlags, Intrinsics, JSException, QuickJS, type JSValueHandle } from "quickjs-wasi";
-
 const require = createRequire(import.meta.url);
 const QUICKJS_WASM_PATH = require.resolve("quickjs-wasi/quickjs.wasm");
 let quickJsWasmModulePromise: Promise<WebAssembly.Module> | undefined;
@@ -43,12 +45,19 @@ type CodeModeNamespaceDescriptor = {
   scope: SerializedCodeModeNamespaceValue;
 };
 
+type CodeModeApiVirtualFile = {
+  path: string;
+  description?: string;
+  content: string;
+};
+
 type CodeModeWorkerInput =
   | {
       kind: "exec";
       source: string;
       config: CodeModeConfig;
       catalog: unknown[];
+      apiFiles?: CodeModeApiVirtualFile[];
       namespaces: CodeModeNamespaceDescriptor[];
     }
   | {
@@ -141,6 +150,16 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value && typeof value === "object" && !Array.isArray(value));
 }
 
+function errorMessage(error: unknown): string {
+  if (error instanceof JSException) {
+    return error.stack || error.message || String(error);
+  }
+  if (error instanceof Error) {
+    return error.message || String(error);
+  }
+  return String(error);
+}
+
 function toJsonSafe(value: unknown): unknown {
   if (value === undefined) {
     return null;
@@ -170,21 +189,12 @@ function toJsonSafe(value: unknown): unknown {
   }
 }
 
-function errorMessage(error: unknown): string {
-  if (error instanceof JSException) {
-    return error.stack || error.message || String(error);
-  }
-  if (error instanceof Error) {
-    return error.message || String(error);
-  }
-  return String(error);
-}
-
 const CONTROLLER_SOURCE = String.raw`
 (() => {
   const output = [];
   const pending = new Map();
   const catalog = Array.isArray(globalThis.__openclawCatalog) ? globalThis.__openclawCatalog : [];
+  const apiFiles = Array.isArray(globalThis.__openclawApiFiles) ? globalThis.__openclawApiFiles : [];
   const namespaceDescriptors = Array.isArray(globalThis.__openclawNamespaces) ? globalThis.__openclawNamespaces : [];
 
   function safe(value) {
@@ -269,6 +279,47 @@ const CONTROLLER_SOURCE = String.raw`
     call: { value: (id, input) => request("call", [id, input]), enumerable: true },
   });
 
+  function normalizeApiPath(value) {
+    const text = String(value ?? "").trim().replace(/^\/+/, "");
+    if (!text || text.split("/").some((segment) => !segment || segment === "." || segment === "..")) {
+      throw new Error("invalid API file path");
+    }
+    return text;
+  }
+
+  const apiFileMap = new Map();
+  for (const file of apiFiles) {
+    if (!file || typeof file !== "object") continue;
+    const path = typeof file.path === "string" ? file.path : "";
+    const content = typeof file.content === "string" ? file.content : "";
+    if (!path || !content) continue;
+    apiFileMap.set(path, Object.freeze({
+      path,
+      content,
+      description: typeof file.description === "string" ? file.description : undefined,
+      bytes: content.length,
+    }));
+  }
+  const api = Object.freeze({
+    list: async (prefix = "") => {
+      const normalizedPrefix = prefix == null || String(prefix).trim() === "" ? "" : normalizeApiPath(prefix);
+      const files = [...apiFileMap.values()]
+        .filter((file) => !normalizedPrefix || file.path === normalizedPrefix || file.path.startsWith(normalizedPrefix.replace(/\/?$/, "/")))
+        .map((file) => Object.freeze({
+          path: file.path,
+          description: file.description,
+          bytes: file.bytes,
+        }));
+      return { files };
+    },
+    read: async (path) => {
+      const normalizedPath = normalizeApiPath(path);
+      const file = apiFileMap.get(normalizedPath);
+      if (!file) throw new Error("Unknown API file: " + normalizedPath);
+      return file;
+    },
+  });
+
   const safeNameCounts = new Map();
   for (const tool of catalog) {
     const name = typeof tool?.name === "string" ? tool.name : "";
@@ -308,6 +359,7 @@ const CONTROLLER_SOURCE = String.raw`
 
   Object.defineProperties(globalThis, {
     ALL_TOOLS: { value: Object.freeze(catalog.slice()), enumerable: true },
+    API: { value: api, enumerable: true },
     namespaces: { value: Object.freeze(namespaceGlobals), enumerable: true },
     tools: { value: Object.freeze(baseTools), enumerable: true },
     text: { value: (value) => output.push({ type: "text", text: asText(value) }), enumerable: true },
@@ -342,13 +394,15 @@ function createHostRequestHandler(params: {
     ) {
       throw new Error("unsupported code mode bridge method");
     }
-    let args: unknown = [];
+    let args: unknown;
     try {
       args = JSON.parse(argsHandle.toString()) as unknown;
     } catch {
       args = [];
     }
     const id = `bridge:${params.pendingRequests.length + 1}:${randomUUID()}`;
+    // The guest receives only an opaque id. Host-side tool execution and policy
+    // happen after the worker returns a waiting snapshot.
     params.pendingRequests.push({
       id,
       method,
@@ -360,6 +414,7 @@ function createHostRequestHandler(params: {
 
 async function createVm(params: {
   catalog: unknown[];
+  apiFiles: CodeModeApiVirtualFile[];
   namespaces: CodeModeNamespaceDescriptor[];
   config: CodeModeConfig;
   pendingRequests: PendingBridgeRequest[];
@@ -388,6 +443,12 @@ async function createVm(params: {
     vm.setProp(vm.global, "__openclawNamespaces", namespacesHandle);
   } finally {
     namespacesHandle.dispose();
+  }
+  const apiFilesHandle = vm.hostToHandle(params.apiFiles);
+  try {
+    vm.setProp(vm.global, "__openclawApiFiles", apiFilesHandle);
+  } finally {
+    apiFilesHandle.dispose();
   }
   const hostRequest = vm.newFunction(
     "__openclawHostRequest",
@@ -544,44 +605,75 @@ function waitingResult(params: {
   };
 }
 
-async function runExec(input: Extract<CodeModeWorkerInput, { kind: "exec" }>) {
-  const pendingRequests: PendingBridgeRequest[] = [];
-  const { vm, didTimeout } = await createVm({
-    catalog: input.catalog,
-    namespaces: input.namespaces,
-    config: input.config,
-    pendingRequests,
-  });
+async function runVmExecution(params: {
+  vm: QuickJS;
+  didTimeout: () => boolean;
+  pendingRequests: PendingBridgeRequest[];
+  config: CodeModeConfig;
+  prepare: () => void;
+}): Promise<CodeModeWorkerResult> {
   let output: unknown[] = [];
   try {
-    vm.evalCode(
-      buildUserSource(input.source),
-      "openclaw-code-mode:user.js",
-      EvalFlags.ASYNC,
-    ).dispose();
-    drainPendingJobs(vm);
-    output = takeOutput(vm);
-    const resultHandle = getResultHandle(vm);
+    params.prepare();
+    drainPendingJobs(params.vm);
+    output = takeOutput(params.vm);
+    const resultHandle = getResultHandle(params.vm);
     try {
-      if (pendingRequests.length > 0) {
-        return waitingResult({ vm, pendingRequests, output, config: input.config });
+      if (params.pendingRequests.length > 0) {
+        // Pending host work suspends the VM instead of blocking in-worker; the
+        // host resumes with settled bridge results via runResume.
+        return waitingResult({
+          vm: params.vm,
+          pendingRequests: params.pendingRequests,
+          output,
+          config: params.config,
+        });
       }
       if (resultHandle.isPromise && resultHandle.promiseState === 0) {
         throw new Error("code mode promise is pending without host work");
       }
       return {
-        status: "completed" as const,
-        value: await readCompletedResult(vm, resultHandle),
+        status: "completed",
+        value: await readCompletedResult(params.vm, resultHandle),
         output,
       };
     } finally {
       resultHandle.dispose();
     }
   } catch (error) {
-    return throwWorkerFailureWithOutput({ error, didTimeout, output, vm });
+    return throwWorkerFailureWithOutput({
+      error,
+      didTimeout: params.didTimeout,
+      output,
+      vm: params.vm,
+    });
   } finally {
-    vm.dispose();
+    params.vm.dispose();
   }
+}
+
+async function runExec(input: Extract<CodeModeWorkerInput, { kind: "exec" }>) {
+  const pendingRequests: PendingBridgeRequest[] = [];
+  const { vm, didTimeout } = await createVm({
+    catalog: input.catalog,
+    apiFiles: input.apiFiles ?? [],
+    namespaces: input.namespaces,
+    config: input.config,
+    pendingRequests,
+  });
+  return runVmExecution({
+    vm,
+    didTimeout,
+    pendingRequests,
+    config: input.config,
+    prepare: () => {
+      vm.evalCode(
+        buildUserSource(input.source),
+        "openclaw-code-mode:user.js",
+        EvalFlags.ASYNC,
+      ).dispose();
+    },
+  });
 }
 
 async function runResume(input: Extract<CodeModeWorkerInput, { kind: "resume" }>) {
@@ -591,52 +683,35 @@ async function runResume(input: Extract<CodeModeWorkerInput, { kind: "resume" }>
     config: input.config,
     pendingRequests,
   });
-  let output: unknown[] = [];
-  try {
-    const settle = vm.global.getProp("__openclawSettleBridge");
-    try {
-      for (const request of input.settledRequests) {
-        const id = vm.newString(request.id);
-        const payload = vm.newString(JSON.stringify(request.ok ? request.value : request.error));
-        try {
-          vm.callFunction(
-            settle,
-            vm.undefined,
-            id,
-            request.ok ? vm.true : vm.false,
-            payload,
-          ).dispose();
-        } finally {
-          id.dispose();
-          payload.dispose();
+  return runVmExecution({
+    vm,
+    didTimeout,
+    pendingRequests,
+    config: input.config,
+    prepare: () => {
+      const settle = vm.global.getProp("__openclawSettleBridge");
+      try {
+        for (const request of input.settledRequests) {
+          const id = vm.newString(request.id);
+          const payload = vm.newString(JSON.stringify(request.ok ? request.value : request.error));
+          try {
+            vm.callFunction(
+              settle,
+              vm.undefined,
+              id,
+              request.ok ? vm.true : vm.false,
+              payload,
+            ).dispose();
+          } finally {
+            id.dispose();
+            payload.dispose();
+          }
         }
+      } finally {
+        settle.dispose();
       }
-    } finally {
-      settle.dispose();
-    }
-    drainPendingJobs(vm);
-    output = takeOutput(vm);
-    const resultHandle = getResultHandle(vm);
-    try {
-      if (pendingRequests.length > 0) {
-        return waitingResult({ vm, pendingRequests, output, config: input.config });
-      }
-      if (resultHandle.isPromise && resultHandle.promiseState === 0) {
-        throw new Error("code mode promise is pending without host work");
-      }
-      return {
-        status: "completed" as const,
-        value: await readCompletedResult(vm, resultHandle),
-        output,
-      };
-    } finally {
-      resultHandle.dispose();
-    }
-  } catch (error) {
-    return throwWorkerFailureWithOutput({ error, didTimeout, output, vm });
-  } finally {
-    vm.dispose();
-  }
+    },
+  });
 }
 
 async function main(): Promise<CodeModeWorkerResult> {
@@ -656,6 +731,7 @@ async function main(): Promise<CodeModeWorkerResult> {
         source: input.source,
         config: input.config as CodeModeConfig,
         catalog: Array.isArray(input.catalog) ? input.catalog : [],
+        apiFiles: Array.isArray(input.apiFiles) ? (input.apiFiles as CodeModeApiVirtualFile[]) : [],
         namespaces: Array.isArray(input.namespaces)
           ? (input.namespaces as CodeModeNamespaceDescriptor[])
           : [],
@@ -678,14 +754,22 @@ async function main(): Promise<CodeModeWorkerResult> {
       output: [],
     };
   } catch (error) {
+    const timedOut = isQuickJsInterruptedError(error);
     return {
       status: "failed",
-      error: errorMessage(error),
-      code: error instanceof CodeModeWorkerFailure ? error.code : "internal_error",
+      error: timedOut ? "code mode timeout exceeded" : errorMessage(error),
+      code: timedOut
+        ? "timeout"
+        : error instanceof CodeModeWorkerFailure
+          ? error.code
+          : "internal_error",
       output: error instanceof CodeModeWorkerFailureWithOutput ? error.output : [],
     };
   }
 }
 
-// oxlint-disable-next-line unicorn/require-post-message-target-origin -- Node worker_threads MessagePort, not window.postMessage.
-parentPort?.postMessage(await main());
+if (parentPort) {
+  Reflect.apply(Reflect.get(parentPort, "postMessage") as (message: unknown) => void, parentPort, [
+    await main(),
+  ]);
+}

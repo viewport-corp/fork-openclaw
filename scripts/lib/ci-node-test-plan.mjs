@@ -1,3 +1,4 @@
+// Builds CI node/Vitest shard plans from the full suite configuration.
 import { relative } from "node:path";
 import { commandsLightTestFiles } from "../../test/vitest/vitest.commands-light-paths.mjs";
 import { fullSuiteVitestShards } from "../../test/vitest/vitest.test-shards.mjs";
@@ -11,6 +12,30 @@ const EXCLUDED_FULL_SUITE_SHARDS = new Set([
 
 const EXCLUDED_PROJECT_CONFIGS = new Set(["test/vitest/vitest.channels.config.ts"]);
 const DEFAULT_NODE_TEST_RUNNER = "blacksmith-8vcpu-ubuntu-2404";
+const BUNDLED_NODE_TEST_RUNNER = "blacksmith-4vcpu-ubuntu-2404";
+const MAX_BUNDLED_NODE_TEST_PATTERNS = 64;
+const COMPACT_NODE_TEST_JOB_WEIGHT = 192;
+const COMPACT_NODE_TEST_JOB_GROUPS = 8;
+const COMPACT_WHOLE_NODE_TEST_JOB_GROUPS = 6;
+const COMPACT_WHOLE_NODE_TEST_TIMEOUT_MINUTES = 120;
+// Commands and cron run non-isolated, so keep their split shards as separate
+// processes. Combining their include lists can retain test state across groups.
+const BUNDLEABLE_NODE_TEST_CONFIGS = new Set(["test/vitest/vitest.infra.config.ts"]);
+const KEEP_LARGE_NODE_TEST_RUNNER = new Set([
+  "agentic-agents-core-auth",
+  "agentic-agents-core-models",
+  "agentic-agents-core-runtime",
+  "agentic-agents-core-subagents",
+  "agentic-agents-embedded",
+  "agentic-agents-support",
+  "agentic-agents-core-runner",
+  "agentic-agents-core-tools",
+  "agentic-gateway-core",
+  "agentic-gateway-methods",
+  "auto-reply-reply-dispatch",
+  "core-runtime-media-ui",
+  "core-unit-fast",
+]);
 const RELEASE_ONLY_PLUGIN_SHARDS = new Set(["agentic-plugins"]);
 function listTestFiles(rootDir) {
   return listTrackedTestFiles(rootDir);
@@ -172,6 +197,92 @@ function createAgenticCommandSplitShards() {
     .filter((shard) => shard.includePatterns.length > 0);
 }
 
+function resolveAgentCoreShardName(file) {
+  const name = relative("src/agents", file).replaceAll("\\", "/");
+  if (
+    name.startsWith("auth") ||
+    name.includes("auth") ||
+    name.includes("oauth") ||
+    name.includes("credential") ||
+    name.includes("api-key") ||
+    name.includes("token")
+  ) {
+    return "agentic-agents-core-auth";
+  }
+  if (
+    name.startsWith("model") ||
+    name.includes("provider") ||
+    name.includes("openai") ||
+    name.includes("anthropic") ||
+    name.includes("gemini") ||
+    name.includes("moonshot") ||
+    name.includes("minimax") ||
+    name.includes("xai") ||
+    name.includes("zai") ||
+    name.includes("chutes") ||
+    name.includes("catalog")
+  ) {
+    return "agentic-agents-core-models";
+  }
+  if (
+    name.startsWith("agent-tools") ||
+    name.startsWith("openclaw-tools") ||
+    name.startsWith("bash-tools") ||
+    name.startsWith("tool") ||
+    name.startsWith("apply-patch") ||
+    name.startsWith("exec") ||
+    name.startsWith("sandbox")
+  ) {
+    return "agentic-agents-core-tools";
+  }
+  if (
+    name.startsWith("subagent") ||
+    name.startsWith("spawn") ||
+    name.startsWith("embedded-agent-subscribe")
+  ) {
+    return "agentic-agents-core-subagents";
+  }
+  if (
+    name.startsWith("embedded-agent-runner") ||
+    name.startsWith("cli-runner") ||
+    name.startsWith("agent-command") ||
+    name.startsWith("command") ||
+    name.includes("compaction") ||
+    name.includes("session")
+  ) {
+    return "agentic-agents-core-runner";
+  }
+  return "agentic-agents-core-runtime";
+}
+
+function createAgentCoreSplitShards() {
+  const groups = new Map();
+  for (const file of listTestFiles("src/agents")) {
+    const name = relative("src/agents", file).replaceAll("\\", "/");
+    if (name.includes("/")) {
+      continue;
+    }
+    const shardName = resolveAgentCoreShardName(file);
+    groups.set(shardName, [...(groups.get(shardName) ?? []), file]);
+  }
+
+  return [
+    "agentic-agents-core-auth",
+    "agentic-agents-core-models",
+    "agentic-agents-core-tools",
+    "agentic-agents-core-subagents",
+    "agentic-agents-core-runner",
+    "agentic-agents-core-runtime",
+  ]
+    .map((shardName) => ({
+      configs: ["test/vitest/vitest.agents-core.config.ts"],
+      includePatterns: groups.get(shardName) ?? [],
+      requiresDist: false,
+      shardName,
+    }))
+    .filter((shard) => shard.includePatterns.length > 0);
+}
+
 const GATEWAY_SERVER_BACKED_HTTP_TESTS = new Set([
   "src/gateway/embeddings-http.test.ts",
   "src/gateway/models-http.test.ts",
@@ -193,6 +304,26 @@ function isGatewayServerTestFile(file) {
     !GATEWAY_SERVER_EXCLUDED_TESTS.has(file) &&
     (file.includes("server") || GATEWAY_SERVER_BACKED_HTTP_TESTS.has(file))
   );
+}
+
+function resolveGatewayStartupShardName(file) {
+  const name = relative("src/gateway", file).replaceAll("\\", "/");
+  if (name.startsWith("server-startup-config") || name.startsWith("server-startup-early")) {
+    return "agentic-control-plane-startup-config";
+  }
+  if (
+    name.startsWith("server-runtime") ||
+    name.startsWith("server.health") ||
+    name.startsWith("server.lazy") ||
+    name.startsWith("server/health-state") ||
+    name.startsWith("server/readiness")
+  ) {
+    return "agentic-control-plane-startup-health-runtime";
+  }
+  if (name.startsWith("server-restart") || name === "server-close.test.ts") {
+    return "agentic-control-plane-startup-restart-close";
+  }
+  return "agentic-control-plane-startup-core";
 }
 
 function resolveGatewayServerShardName(file) {
@@ -232,7 +363,13 @@ function resolveGatewayServerShardName(file) {
     name.startsWith("server/readiness") ||
     name === "server-close.test.ts"
   ) {
-    return "agentic-control-plane-startup-runtime";
+    return resolveGatewayStartupShardName(file);
+  }
+  if (name.includes("cron")) {
+    return "agentic-control-plane-runtime-cron";
+  }
+  if (name.includes("network")) {
+    return "agentic-control-plane-runtime-network";
   }
   if (
     name.includes("plugin") ||
@@ -241,6 +378,29 @@ function resolveGatewayServerShardName(file) {
     name.includes("ws-connection")
   ) {
     return "agentic-control-plane-http-plugin-ws";
+  }
+  if (name.startsWith("server-")) {
+    return "agentic-control-plane-runtime-server";
+  }
+  if (name.startsWith("server.config-patch")) {
+    return "agentic-control-plane-runtime-config";
+  }
+  if (name.startsWith("server.shared-token")) {
+    return "agentic-control-plane-runtime-shared-token";
+  }
+  if (
+    name.startsWith("server.control-ui-root") ||
+    name.startsWith("server.ios-client-id") ||
+    name.startsWith("server.minimal-channel-pin") ||
+    name.startsWith("server.tools-catalog")
+  ) {
+    return "agentic-control-plane-runtime-ui-tools";
+  }
+  if (name.startsWith("server/")) {
+    return "agentic-control-plane-runtime-events";
+  }
+  if (name.startsWith("server.") || name.startsWith("server/")) {
+    return "agentic-control-plane-runtime-state";
   }
   return "agentic-control-plane-runtime";
 }
@@ -257,7 +417,18 @@ function createGatewayServerSplitShards() {
     "agentic-control-plane-http-models",
     "agentic-control-plane-http-plugin-ws",
     "agentic-control-plane-runtime",
-    "agentic-control-plane-startup-runtime",
+    "agentic-control-plane-runtime-config",
+    "agentic-control-plane-runtime-cron",
+    "agentic-control-plane-runtime-events",
+    "agentic-control-plane-runtime-network",
+    "agentic-control-plane-runtime-server",
+    "agentic-control-plane-runtime-shared-token",
+    "agentic-control-plane-runtime-state",
+    "agentic-control-plane-runtime-ui-tools",
+    "agentic-control-plane-startup-config",
+    "agentic-control-plane-startup-core",
+    "agentic-control-plane-startup-health-runtime",
+    "agentic-control-plane-startup-restart-close",
   ]
     .map((shardName) => ({
       configs: ["test/vitest/vitest.gateway-server.config.ts"],
@@ -571,6 +742,24 @@ const SPLIT_NODE_SHARDS = new Map([
   ],
   ["core-unit-security", []],
   [
+    "core-tooling",
+    [
+      {
+        shardName: "core-tooling",
+        configs: [
+          "test/vitest/vitest.tooling.config.ts",
+          "test/vitest/vitest.tooling-isolated.config.ts",
+        ],
+        requiresDist: false,
+      },
+      {
+        shardName: "core-tooling-docker",
+        configs: ["test/vitest/vitest.tooling-docker.config.ts"],
+        requiresDist: false,
+      },
+    ],
+  ],
+  [
     "core-unit-support",
     [
       {
@@ -603,6 +792,15 @@ const SPLIT_NODE_SHARDS = new Map([
           "test/vitest/vitest.process.config.ts",
           "test/vitest/vitest.runtime-config.config.ts",
         ],
+        requiresDist: false,
+        runner: "blacksmith-4vcpu-ubuntu-2404",
+      },
+      {
+        shardName: "core-runtime-tui-pty",
+        configs: ["test/vitest/vitest.tui-pty.config.ts"],
+        env: {
+          OPENCLAW_TUI_PTY_INCLUDE_LOCAL: "1",
+        },
         requiresDist: false,
         runner: "blacksmith-4vcpu-ubuntu-2404",
       },
@@ -662,11 +860,7 @@ const SPLIT_NODE_SHARDS = new Map([
         requiresDist: false,
       },
       ...createAgenticCommandSplitShards(),
-      {
-        shardName: "agentic-agents-core",
-        configs: ["test/vitest/vitest.agents-core.config.ts"],
-        requiresDist: false,
-      },
+      ...createAgentCoreSplitShards(),
       {
         shardName: "agentic-agents-embedded",
         configs: ["test/vitest/vitest.agents-embedded-agent.config.ts"],
@@ -720,6 +914,7 @@ function formatNodeTestShardCheckName(shardName) {
   return `checks-node-${normalizedShardName}`;
 }
 
+/** Create node test shard descriptors for CI, optionally excluding release-only plugin shards. */
 export function createNodeTestShards(options = {}) {
   const includeReleaseOnlyPluginShards = options.includeReleaseOnlyPluginShards ?? true;
 
@@ -755,6 +950,7 @@ export function createNodeTestShards(options = {}) {
             checkName: formatNodeTestShardCheckName(splitShard.shardName),
             shardName: splitShard.shardName,
             configs: splitConfigs,
+            ...(splitShard.env ? { env: splitShard.env } : {}),
             ...(splitShard.includePatterns ? { includePatterns: splitShard.includePatterns } : {}),
             runner: splitShard.runner ?? DEFAULT_NODE_TEST_RUNNER,
             requiresDist: splitShard.requiresDist,
@@ -773,4 +969,178 @@ export function createNodeTestShards(options = {}) {
       },
     ];
   });
+}
+
+function resolveCiNodeTestRunner(shard) {
+  if (shard.runner !== DEFAULT_NODE_TEST_RUNNER) {
+    return shard.runner;
+  }
+  return KEEP_LARGE_NODE_TEST_RUNNER.has(shard.shardName)
+    ? DEFAULT_NODE_TEST_RUNNER
+    : BUNDLED_NODE_TEST_RUNNER;
+}
+
+function bundleNameForConfigs(configs) {
+  const config = configs[0] ?? "node";
+  return config
+    .replace(/^test\/vitest\/vitest\./u, "")
+    .replace(/\.config\.ts$/u, "")
+    .replace(/[^a-z0-9-]+/giu, "-");
+}
+
+/**
+ * Collapse split include-pattern shards into bounded jobs for normal CI.
+ * The base plan remains unchanged for release and coverage consumers.
+ */
+export function createNodeTestShardBundles(options = {}) {
+  if (options.compact === true) {
+    return createCompactNodeTestShardBundles(options);
+  }
+
+  const shards = createNodeTestShards(options);
+  const unbundled = [];
+  const groups = new Map();
+
+  for (const shard of shards) {
+    const runner = resolveCiNodeTestRunner(shard);
+    if (
+      shard.requiresDist ||
+      shard.configs.length !== 1 ||
+      !BUNDLEABLE_NODE_TEST_CONFIGS.has(shard.configs[0]) ||
+      !Array.isArray(shard.includePatterns) ||
+      shard.includePatterns.length === 0
+    ) {
+      unbundled.push({ ...shard, runner });
+      continue;
+    }
+
+    const key = JSON.stringify([shard.configs, shard.requiresDist, runner]);
+    const group = groups.get(key) ?? {
+      configs: shard.configs,
+      requiresDist: shard.requiresDist,
+      runner,
+      shards: [],
+    };
+    group.shards.push(shard);
+    groups.set(key, group);
+  }
+
+  const bundled = [];
+  for (const group of groups.values()) {
+    const bins = [];
+    const sortedShards = group.shards.toSorted(
+      (a, b) =>
+        (b.includePatterns?.length ?? 0) - (a.includePatterns?.length ?? 0) ||
+        a.shardName.localeCompare(b.shardName),
+    );
+    for (const shard of sortedShards) {
+      const patterns = shard.includePatterns ?? [];
+      for (let offset = 0; offset < patterns.length; offset += MAX_BUNDLED_NODE_TEST_PATTERNS) {
+        const chunk = patterns.slice(offset, offset + MAX_BUNDLED_NODE_TEST_PATTERNS);
+        const bin = bins.find(
+          (candidate) =>
+            candidate.includePatterns.length + chunk.length <= MAX_BUNDLED_NODE_TEST_PATTERNS,
+        );
+        if (bin) {
+          bin.includePatterns.push(...chunk);
+        } else {
+          bins.push({ includePatterns: [...chunk] });
+        }
+      }
+    }
+
+    const runnerClass = group.runner.includes("-8vcpu-") ? "large" : "small";
+    const bundleName = `${bundleNameForConfigs(group.configs)}-${runnerClass}`;
+    for (const [index, bin] of bins.entries()) {
+      const shardName = `bundle-${bundleName}-${index + 1}`;
+      bundled.push({
+        checkName: formatNodeTestShardCheckName(shardName),
+        shardName,
+        configs: group.configs,
+        includePatterns: bin.includePatterns.toSorted((a, b) => a.localeCompare(b)),
+        runner: group.runner,
+        requiresDist: group.requiresDist,
+      });
+    }
+  }
+
+  return [...unbundled, ...bundled].toSorted((a, b) => a.checkName.localeCompare(b.checkName));
+}
+
+function createCompactNodeTestShardBundles(options = {}) {
+  const shards = createNodeTestShards(options);
+  const groupsByRunner = new Map();
+
+  for (const shard of shards) {
+    const runner = resolveCiNodeTestRunner(shard);
+    const key = JSON.stringify([runner, shard.requiresDist]);
+    const groups = groupsByRunner.get(key) ?? [];
+    groups.push({
+      configs: shard.configs,
+      ...(shard.env ? { env: shard.env } : {}),
+      ...(shard.includePatterns ? { includePatterns: shard.includePatterns } : {}),
+      requiresDist: shard.requiresDist,
+      runner,
+      shard_name: shard.shardName,
+    });
+    groupsByRunner.set(key, groups);
+  }
+
+  const compactJobs = [];
+  for (const groups of groupsByRunner.values()) {
+    const bins = [];
+    const sortedGroups = groups.toSorted(
+      (a, b) =>
+        (b.includePatterns?.length ?? 1) - (a.includePatterns?.length ?? 1) ||
+        a.shard_name.localeCompare(b.shard_name),
+    );
+    for (const group of sortedGroups.filter((candidate) => candidate.includePatterns)) {
+      const weight = group.includePatterns.length;
+      const bin = bins.find(
+        (candidate) =>
+          candidate.groups.length < COMPACT_NODE_TEST_JOB_GROUPS &&
+          candidate.weight + weight <= COMPACT_NODE_TEST_JOB_WEIGHT,
+      );
+      if (bin) {
+        bin.groups.push(group);
+        bin.weight += weight;
+      } else {
+        bins.push({ groups: [group], weight });
+      }
+    }
+
+    const wholeGroups = sortedGroups.filter((candidate) => !candidate.includePatterns);
+    for (
+      let offset = 0;
+      offset < wholeGroups.length;
+      offset += COMPACT_WHOLE_NODE_TEST_JOB_GROUPS
+    ) {
+      const groupBatch = wholeGroups.slice(offset, offset + COMPACT_WHOLE_NODE_TEST_JOB_GROUPS);
+      const runnerClass = groupBatch[0].runner.includes("-8vcpu-") ? "large" : "small";
+      const distSuffix = groupBatch[0].requiresDist ? "-dist" : "";
+      const index = offset / COMPACT_WHOLE_NODE_TEST_JOB_GROUPS + 1;
+      compactJobs.push({
+        checkName: `checks-node-compact-${runnerClass}${distSuffix}-whole-${index}`,
+        groups: groupBatch,
+        requiresDist: groupBatch[0].requiresDist,
+        runner: groupBatch[0].runner,
+        shardName: `compact-${runnerClass}${distSuffix}-whole-${index}`,
+        timeoutMinutes: COMPACT_WHOLE_NODE_TEST_TIMEOUT_MINUTES,
+      });
+    }
+
+    for (const [index, bin] of bins.entries()) {
+      const runnerClass = bin.groups[0].runner.includes("-8vcpu-") ? "large" : "small";
+      const distSuffix = bin.groups[0].requiresDist ? "-dist" : "";
+      compactJobs.push({
+        checkName: `checks-node-compact-${runnerClass}${distSuffix}-${index + 1}`,
+        groups: bin.groups,
+        requiresDist: bin.groups[0].requiresDist,
+        runner: bin.groups[0].runner,
+        shardName: `compact-${runnerClass}-${index + 1}`,
+      });
+    }
+  }
+
+  return compactJobs.toSorted((a, b) => a.checkName.localeCompare(b.checkName));
 }

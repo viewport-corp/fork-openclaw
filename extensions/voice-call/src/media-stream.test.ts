@@ -1,3 +1,4 @@
+// Voice Call tests cover media stream plugin behavior.
 import type { IncomingMessage } from "node:http";
 import net from "node:net";
 import { MAX_TIMER_TIMEOUT_MS } from "openclaw/plugin-sdk/number-runtime";
@@ -198,6 +199,39 @@ describe("MediaStreamHandler security hardening", () => {
     expect((error as Error).cause).toBeInstanceOf(SyntaxError);
   });
 
+  it("rejects start frames when no stream acceptance validator is configured", async () => {
+    const createSession = vi.fn(() => createStubSession());
+    const handler = new MediaStreamHandler({
+      transcriptionProvider: {
+        createSession,
+        id: "openai",
+        label: "OpenAI",
+        isConfigured: () => true,
+      },
+      providerConfig: {},
+    });
+    const server = await startWsServer(handler);
+
+    try {
+      const ws = await connectWs(server.url);
+      ws.send(
+        JSON.stringify({
+          event: "start",
+          streamSid: "MZ-unvalidated",
+          start: { callSid: "CA-unvalidated" },
+        }),
+      );
+
+      const closed = await waitForClose(ws);
+
+      expect(closed.code).toBe(1008);
+      expect(closed.reason).toBe("Unauthorized stream");
+      expect(createSession).not.toHaveBeenCalled();
+    } finally {
+      await server.close();
+    }
+  });
+
   it("emits common Talk events for telephony STT/TTS sessions", async () => {
     let callbacks: RealtimeTranscriptionSessionCreateRequest | undefined;
     const sentAudio: Buffer[] = [];
@@ -355,8 +389,8 @@ describe("MediaStreamHandler security hardening", () => {
     const result = handler.sendAudio("MZ-backpressure", Buffer.alloc(160, 0xff));
 
     expect(result.sent).toBe(false);
-    expect(ws.send).not.toHaveBeenCalled();
-    expect(ws.close).toHaveBeenCalledWith(1013, "Backpressure: send buffer exceeded");
+    expect(ws["send"]).not.toHaveBeenCalled();
+    expect(ws["close"]).toHaveBeenCalledWith(1013, "Backpressure: send buffer exceeded");
   });
 
   it("fails sends when buffered bytes exceed cap after enqueueing a frame", () => {
@@ -397,9 +431,9 @@ describe("MediaStreamHandler security hardening", () => {
 
     const result = handler.sendMark("MZ-overflow", "mark-1");
 
-    expect(ws.send).toHaveBeenCalledTimes(1);
+    expect(ws["send"]).toHaveBeenCalledTimes(1);
     expect(result.sent).toBe(false);
-    expect(ws.close).toHaveBeenCalledWith(1013, "Backpressure: send buffer exceeded");
+    expect(ws["close"]).toHaveBeenCalledWith(1013, "Backpressure: send buffer exceeded");
   });
 
   it("sanitizes websocket close reason before logging", () => {
@@ -501,12 +535,20 @@ describe("MediaStreamHandler security hardening", () => {
       const first = new WebSocket(server.url, {
         headers: { "x-forwarded-for": "198.51.100.10" },
       });
-      await withTimeout(new Promise((resolve) => first.once("open", resolve)));
+      await withTimeout(
+        new Promise((resolve) => {
+          first.once("open", resolve);
+        }),
+      );
 
       const second = new WebSocket(server.url, {
         headers: { "x-forwarded-for": "203.0.113.20" },
       });
-      await withTimeout(new Promise((resolve) => second.once("open", resolve)));
+      await withTimeout(
+        new Promise((resolve) => {
+          second.once("open", resolve);
+        }),
+      );
 
       expect(first.readyState).toBe(WebSocket.OPEN);
       expect(second.readyState).toBe(WebSocket.OPEN);
@@ -934,7 +976,7 @@ describe("MediaStreamHandler security hardening", () => {
       expect(onTranscriptionReady).not.toHaveBeenCalled();
       expect(onDisconnect).toHaveBeenCalledTimes(1);
       expect(onDisconnect).toHaveBeenCalledWith("CA-stt-fail", "MZ-stt-fail");
-      expect(session.close).toHaveBeenCalledTimes(1);
+      expect(session["close"]).toHaveBeenCalledTimes(1);
     } finally {
       await server.close();
     }

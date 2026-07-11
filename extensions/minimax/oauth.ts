@@ -1,3 +1,4 @@
+// Minimax plugin module implements oauth behavior.
 import { randomBytes, randomUUID } from "node:crypto";
 import {
   MAX_DATE_TIMESTAMP_MS,
@@ -6,6 +7,7 @@ import {
   resolvePositiveTimerTimeoutMs,
 } from "openclaw/plugin-sdk/number-runtime";
 import { generatePkceVerifierChallenge, toFormUrlEncoded } from "openclaw/plugin-sdk/provider-auth";
+import { readResponseTextLimited } from "openclaw/plugin-sdk/provider-http";
 import { ensureGlobalUndiciEnvProxyDispatcher } from "openclaw/plugin-sdk/runtime-env";
 import { fetchWithSsrFGuard } from "openclaw/plugin-sdk/ssrf-runtime";
 
@@ -14,10 +16,12 @@ export type MiniMaxRegion = "cn" | "global";
 const MINIMAX_OAUTH_CONFIG = {
   cn: {
     baseUrl: "https://api.minimaxi.com",
+    oauthBaseUrl: "https://account.minimaxi.com",
     clientId: "78257093-7e40-4613-99e0-527b14b39113",
   },
   global: {
     baseUrl: "https://api.minimax.io",
+    oauthBaseUrl: "https://account.minimax.io",
     clientId: "78257093-7e40-4613-99e0-527b14b39113",
   },
 } as const;
@@ -26,15 +30,16 @@ const MINIMAX_OAUTH_SCOPE = "group_id profile model.completion";
 const MINIMAX_OAUTH_GRANT_TYPE = "urn:ietf:params:oauth:grant-type:user_code";
 const MINIMAX_RELATIVE_EXPIRY_SECONDS_THRESHOLD = 1_000_000_000;
 const MINIMAX_ABSOLUTE_EXPIRY_MS_THRESHOLD = 1_000_000_000_000;
+const MINIMAX_OAUTH_ERROR_BODY_LIMIT_BYTES = 8 * 1024;
 
 function getOAuthEndpoints(region: MiniMaxRegion) {
   const config = MINIMAX_OAUTH_CONFIG[region];
   return {
-    codeEndpoint: `${config.baseUrl}/oauth/code`,
-    tokenEndpoint: `${config.baseUrl}/oauth/token`,
+    codeEndpoint: `${config.oauthBaseUrl}/oauth2/device/code`,
+    tokenEndpoint: `${config.oauthBaseUrl}/oauth2/token`,
     clientId: config.clientId,
     baseUrl: config.baseUrl,
-    hostname: new URL(config.baseUrl).hostname,
+    hostname: new URL(config.oauthBaseUrl).hostname,
   };
 }
 
@@ -112,7 +117,7 @@ async function requestOAuthCode(params: {
   });
   try {
     if (!response.ok) {
-      const text = await response.text();
+      const text = await readResponseTextLimited(response, MINIMAX_OAUTH_ERROR_BODY_LIMIT_BYTES);
       throw new Error(`MiniMax OAuth authorization failed: ${text || response.statusText}`);
     }
 
@@ -168,7 +173,7 @@ async function pollOAuthToken(params: {
 }
 
 async function parseMiniMaxOAuthTokenResponse(response: Response): Promise<TokenResult> {
-  const text = await response.text();
+  const text = await readResponseTextLimited(response, MINIMAX_OAUTH_ERROR_BODY_LIMIT_BYTES);
   let payload:
     | {
         status?: string;
@@ -284,7 +289,9 @@ export async function loginMiniMaxPortalOAuth(params: {
     if (remainingMs <= 0) {
       break;
     }
-    await new Promise((resolve) => setTimeout(resolve, Math.min(pollIntervalMs, remainingMs)));
+    await new Promise((resolve) => {
+      setTimeout(resolve, Math.min(pollIntervalMs, remainingMs));
+    });
     pollIntervalMs = Math.max(pollIntervalMs, 2000);
   }
 

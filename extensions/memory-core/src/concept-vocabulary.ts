@@ -1,3 +1,4 @@
+// Memory Core plugin module implements concept vocabulary behavior.
 import path from "node:path";
 import { normalizeLowercaseStringOrEmpty } from "openclaw/plugin-sdk/string-coerce-runtime";
 
@@ -207,7 +208,6 @@ const LANGUAGE_STOP_WORDS = {
     "한",
     "할",
     "해",
-    "했다",
     "했다",
   ],
   pathNoise: [
