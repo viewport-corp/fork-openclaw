@@ -19,10 +19,11 @@ services:
     volumes:
       - ${OPENCLAW_CONFIG_DIR:-${HOME:-/tmp}/.openclaw}:/home/node/.openclaw
       - ${OPENCLAW_WORKSPACE_DIR:-${HOME:-/tmp}/.openclaw/workspace}:/home/node/.openclaw/workspace
-      - /var/run/docker.sock:/var/run/docker.sock
+      - ${OPENCLAW_DOCKER_SOCK:-/var/run/docker.sock}:/var/run/docker.sock
       - /srv/viewport:/srv/viewport
       - /opt/platformx:/opt/platformx
-      - /srv/viewport/runtime/openclaw-fresh/ssh:/home/node/.ssh:ro
+      - ${OPENCLAW_SSH_DIR:-/srv/viewport/runtime/openclaw-fresh/ssh}:/home/node/.ssh:ro
+      - ${OPENCLAW_AUTH_SECRET_DIR:-/root/.openclaw-auth-profile-secrets}:/home/node/.config/openclaw
     group_add:
       - "${DOCKER_GID:-999}"
 
@@ -44,9 +45,10 @@ services:
     volumes:
       - ${OPENCLAW_CONFIG_DIR:-${HOME:-/tmp}/.openclaw}:/home/node/.openclaw
       - ${OPENCLAW_WORKSPACE_DIR:-${HOME:-/tmp}/.openclaw/workspace}:/home/node/.openclaw/workspace
-      - /var/run/docker.sock:/var/run/docker.sock
+      - ${OPENCLAW_DOCKER_SOCK:-/var/run/docker.sock}:/var/run/docker.sock
       - /srv/viewport:/srv/viewport
       - /opt/platformx:/opt/platformx
-      - /srv/viewport/runtime/openclaw-fresh/ssh:/home/node/.ssh:ro
+      - ${OPENCLAW_SSH_DIR:-/srv/viewport/runtime/openclaw-fresh/ssh}:/home/node/.ssh:ro
+      - ${OPENCLAW_AUTH_SECRET_DIR:-/root/.openclaw-auth-profile-secrets}:/home/node/.config/openclaw
     group_add:
       - "${DOCKER_GID:-999}"
