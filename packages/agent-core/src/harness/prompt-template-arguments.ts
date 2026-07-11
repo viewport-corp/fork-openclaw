@@ -1,3 +1,5 @@
+import type { PromptTemplate } from "./types.js";
+
 /** Parse an argument string using simple shell-style single and double quotes. */
 export function parseCommandArgs(argsString: string): string[] {
   const args: string[] = [];
@@ -33,7 +35,12 @@ function parseSafeNonNegativeInteger(raw: string): number | undefined {
   return Number.isSafeInteger(parsed) && parsed >= 0 ? parsed : undefined;
 }
 
-/** Substitute prompt template placeholders (`$1`, `$@`, `$ARGUMENTS`, `${@:N}`, `${@:N:L}`) with command arguments. */
+/**
+ * Substitute prompt template placeholders (`$1`, `$@`, `$ARGUMENTS`, `${@:N}`, `${@:N:L}`) with command arguments.
+ *
+ * Unsafe integer placeholders resolve to empty text instead of throwing, so malformed templates cannot abort prompt
+ * loading or invocation.
+ */
 export function substituteArgs(content: string, args: string[]): string {
   let result = content;
   result = result.replace(/\$(\d+)/g, (_, num: string) => {
@@ -50,6 +57,8 @@ export function substituteArgs(content: string, args: string[]): string {
       if (parsedStart === undefined) {
         return "";
       }
+      // Keep shell-style `${@:0:...}` compatibility: start 0 includes `$0` in shell, but
+      // prompt templates have no command name, so it maps to the first provided argument.
       let start = parsedStart - 1;
       if (start < 0) {
         start = 0;
@@ -68,4 +77,12 @@ export function substituteArgs(content: string, args: string[]): string {
   result = result.replace(/\$ARGUMENTS/g, allArgs);
   result = result.replace(/\$@/g, allArgs);
   return result;
+}
+
+/** Format a prompt template invocation using command-style argument substitution. */
+export function formatPromptTemplateInvocation(
+  template: PromptTemplate,
+  args: string[] = [],
+): string {
+  return substituteArgs(template.content, args);
 }

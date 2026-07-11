@@ -1,7 +1,9 @@
+// Gateway Protocol schema module defines protocol validation shapes.
 import type { Static } from "typebox";
 import { Type } from "typebox";
 import { ChatSendSessionKeyString, InputProvenanceSchema, NonEmptyString } from "./primitives.js";
 
+/** Cursor-based request for the gateway log tail endpoint. */
 export const LogsTailParamsSchema = Type.Object(
   {
     cursor: Type.Optional(Type.Integer({ minimum: 0 })),
@@ -11,6 +13,7 @@ export const LogsTailParamsSchema = Type.Object(
   { additionalProperties: false },
 );
 
+/** Gateway log tail payload returned to dashboard clients. */
 export const LogsTailResultSchema = Type.Object(
   {
     file: NonEmptyString,
@@ -23,7 +26,7 @@ export const LogsTailResultSchema = Type.Object(
   { additionalProperties: false },
 );
 
-// WebChat/WebSocket-native chat methods
+/** Session-scoped history request used by WebChat and native WebSocket clients. */
 export const ChatHistoryParamsSchema = Type.Object(
   {
     sessionKey: NonEmptyString,
@@ -34,6 +37,15 @@ export const ChatHistoryParamsSchema = Type.Object(
   { additionalProperties: false },
 );
 
+/** Lightweight chat metadata request; optional agent scope keeps selector state explicit. */
+export const ChatMetadataParamsSchema = Type.Object(
+  {
+    agentId: Type.Optional(NonEmptyString),
+  },
+  { additionalProperties: false },
+);
+
+/** Fetches one stored chat message without forcing history callers to request huge payloads. */
 export const ChatMessageGetParamsSchema = Type.Object(
   {
     sessionKey: NonEmptyString,
@@ -44,6 +56,7 @@ export const ChatMessageGetParamsSchema = Type.Object(
   { additionalProperties: false },
 );
 
+/** Result envelope for single-message lookup, including the stable miss/visibility reason. */
 export const ChatMessageGetResultSchema = Type.Object(
   {
     ok: Type.Boolean(),
@@ -58,8 +71,10 @@ export const ChatMessageGetResultSchema = Type.Object(
   },
   { additionalProperties: false },
 );
+/** Typed result shape for callers that branch on message availability. */
 export type ChatMessageGetResult = Static<typeof ChatMessageGetResultSchema>;
 
+/** User-to-agent send request; idempotency key lets clients safely retry transport failures. */
 export const ChatSendParamsSchema = Type.Object(
   {
     sessionKey: ChatSendSessionKeyString,
@@ -67,7 +82,9 @@ export const ChatSendParamsSchema = Type.Object(
     sessionId: Type.Optional(NonEmptyString),
     message: Type.String(),
     thinking: Type.Optional(Type.String()),
-    fastMode: Type.Optional(Type.Boolean()),
+    fastMode: Type.Optional(Type.Union([Type.Boolean(), Type.Literal("auto")])),
+    // One-turn override for auto fast-mode cutoff seconds.
+    fastAutoOnSeconds: Type.Optional(Type.Integer({ minimum: 1 })),
     deliver: Type.Optional(Type.Boolean()),
     originatingChannel: Type.Optional(Type.String()),
     originatingTo: Type.Optional(Type.String()),
@@ -77,11 +94,13 @@ export const ChatSendParamsSchema = Type.Object(
     timeoutMs: Type.Optional(Type.Integer({ minimum: 0 })),
     systemInputProvenance: Type.Optional(InputProvenanceSchema),
     systemProvenanceReceipt: Type.Optional(Type.String()),
+    suppressCommandInterpretation: Type.Optional(Type.Boolean()),
     idempotencyKey: NonEmptyString,
   },
   { additionalProperties: false },
 );
 
+/** Cancels the active or named run for a chat session. */
 export const ChatAbortParamsSchema = Type.Object(
   {
     sessionKey: NonEmptyString,
@@ -91,6 +110,7 @@ export const ChatAbortParamsSchema = Type.Object(
   { additionalProperties: false },
 );
 
+/** Inserts an operator-visible synthetic message into an existing chat transcript. */
 export const ChatInjectParamsSchema = Type.Object(
   {
     sessionKey: NonEmptyString,
@@ -101,6 +121,7 @@ export const ChatInjectParamsSchema = Type.Object(
   { additionalProperties: false },
 );
 
+/** Shared event fields preserve stream ordering and route events to the right session. */
 const ChatEventBaseSchema = {
   runId: NonEmptyString,
   sessionKey: NonEmptyString,
@@ -109,6 +130,7 @@ const ChatEventBaseSchema = {
   seq: Type.Integer({ minimum: 0 }),
 };
 
+/** Stable error categories exposed over the chat stream. */
 const ChatEventErrorKindSchema = Type.Union([
   Type.Literal("refusal"),
   Type.Literal("timeout"),
@@ -117,6 +139,7 @@ const ChatEventErrorKindSchema = Type.Union([
   Type.Literal("unknown"),
 ]);
 
+/** Incremental assistant output event; `replace` marks full-content refresh deltas. */
 export const ChatDeltaEventSchema = Type.Object(
   {
     ...ChatEventBaseSchema,
@@ -129,6 +152,7 @@ export const ChatDeltaEventSchema = Type.Object(
   { additionalProperties: false },
 );
 
+/** Successful terminal event for a completed chat run. */
 export const ChatFinalEventSchema = Type.Object(
   {
     ...ChatEventBaseSchema,
@@ -140,6 +164,7 @@ export const ChatFinalEventSchema = Type.Object(
   { additionalProperties: false },
 );
 
+/** Terminal event for user-initiated or coordinator-initiated cancellation. */
 export const ChatAbortedEventSchema = Type.Object(
   {
     ...ChatEventBaseSchema,
@@ -150,6 +175,7 @@ export const ChatAbortedEventSchema = Type.Object(
   { additionalProperties: false },
 );
 
+/** Terminal event for failed chat runs with an optional normalized failure kind. */
 export const ChatErrorEventSchema = Type.Object(
   {
     ...ChatEventBaseSchema,
@@ -163,6 +189,7 @@ export const ChatErrorEventSchema = Type.Object(
   { additionalProperties: false },
 );
 
+/** Public chat stream event union consumed by gateway protocol validators. */
 export const ChatEventSchema = Type.Union([
   ChatDeltaEventSchema,
   ChatFinalEventSchema,

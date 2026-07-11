@@ -1,3 +1,4 @@
+// tsdown config defines package build entrypoints and output options.
 import fs from "node:fs";
 import path from "node:path";
 import { defineConfig, type UserConfig } from "tsdown";
@@ -107,7 +108,7 @@ function buildInputOptions(options: InputOptionsArg): InputOptionsReturn {
       return false;
     }
     const haystack = normalizedLogHaystack(log);
-    return SUPPRESSED_EVAL_WARNING_PATHS.some((path) => haystack.includes(path));
+    return SUPPRESSED_EVAL_WARNING_PATHS.some((pathLocal) => haystack.includes(pathLocal));
   }
 
   return {
@@ -198,9 +199,11 @@ const explicitNeverBundleDependencies = [
   "@larksuiteoapi/node-sdk",
   "@matrix-org/matrix-sdk-crypto-nodejs",
   "@vitest/expect",
+  "jimp",
   "matrix-js-sdk",
   "prism-media",
   "qrcode-terminal",
+  "sharp",
   "typescript",
   "vitest",
 ].toSorted((left, right) => left.localeCompare(right));
@@ -217,6 +220,10 @@ function shouldAlwaysBundleDependency(id: string): boolean {
     id.startsWith("@openclaw/fs-safe/") ||
     id === "@openclaw/normalization-core" ||
     id.startsWith("@openclaw/normalization-core/") ||
+    id === "@openclaw/media-core" ||
+    id.startsWith("@openclaw/media-core/") ||
+    id === "@openclaw/acp-core" ||
+    id.startsWith("@openclaw/acp-core/") ||
     id === "zod" ||
     id.startsWith("zod/")
   );
@@ -335,19 +342,15 @@ function buildAgentCoreDistEntries(): Record<string, string> {
     "harness/messages": "packages/agent-core/src/harness/messages.ts",
     "harness/env/kill-tree": "packages/agent-core/src/harness/env/kill-tree.ts",
     "harness/session": "packages/agent-core/src/harness/session/session.ts",
-    "harness/session/jsonl-repo": "packages/agent-core/src/harness/session/jsonl-repo.ts",
     "harness/session/jsonl-storage": "packages/agent-core/src/harness/session/jsonl-storage.ts",
-    "harness/session/memory-repo": "packages/agent-core/src/harness/session/memory-repo.ts",
     "harness/session/memory-storage": "packages/agent-core/src/harness/session/memory-storage.ts",
-    "harness/session/repo-utils": "packages/agent-core/src/harness/session/repo-utils.ts",
     "harness/session/uuid": "packages/agent-core/src/harness/session/uuid.ts",
     "harness/compaction": "packages/agent-core/src/harness/compaction/compaction.ts",
     "harness/branch-summarization":
       "packages/agent-core/src/harness/compaction/branch-summarization.ts",
-    "harness/prompt-templates": "packages/agent-core/src/harness/prompt-templates.ts",
+    "harness/prompt-template-arguments":
+      "packages/agent-core/src/harness/prompt-template-arguments.ts",
     "harness/skills": "packages/agent-core/src/harness/skills.ts",
-    "harness/system-prompt": "packages/agent-core/src/harness/system-prompt.ts",
-    "harness/utils/shell-output": "packages/agent-core/src/harness/utils/shell-output.ts",
     "harness/utils/truncate": "packages/agent-core/src/harness/utils/truncate.ts",
   };
 }
@@ -435,6 +438,53 @@ function buildNormalizationCoreDistEntries(): Record<string, string> {
     "string-coerce": "packages/normalization-core/src/string-coerce.ts",
     "string-normalization": "packages/normalization-core/src/string-normalization.ts",
   };
+}
+
+function buildMediaCoreDistEntries(): Record<string, string> {
+  return {
+    index: "packages/media-core/src/index.ts",
+    base64: "packages/media-core/src/base64.ts",
+    constants: "packages/media-core/src/constants.ts",
+    "content-length": "packages/media-core/src/content-length.ts",
+    "file-name": "packages/media-core/src/file-name.ts",
+    "inbound-path-policy": "packages/media-core/src/inbound-path-policy.ts",
+    "inline-image-data-url": "packages/media-core/src/inline-image-data-url.ts",
+    "media-source-url": "packages/media-core/src/media-source-url.ts",
+    mime: "packages/media-core/src/mime.ts",
+    "read-byte-stream-with-limit": "packages/media-core/src/read-byte-stream-with-limit.ts",
+    "read-response-with-limit": "packages/media-core/src/read-response-with-limit.ts",
+  };
+}
+
+function buildPackageDistEntriesFromExports(packageDir: string): Record<string, string> {
+  const packageJsonPath = path.join("packages", packageDir, "package.json");
+  const packageJson = JSON.parse(fs.readFileSync(packageJsonPath, "utf8")) as {
+    exports?: Record<string, unknown>;
+  };
+  const entries: Record<string, string> = {};
+  for (const [exportKey, value] of Object.entries(packageJson.exports ?? {})) {
+    const entry =
+      exportKey === "." ? "index" : exportKey.startsWith("./") ? exportKey.slice(2) : "";
+    if (!entry || entry.includes("..")) {
+      continue;
+    }
+    const importPath =
+      typeof value === "object" && value !== null && !Array.isArray(value)
+        ? (value as Record<string, unknown>).import
+        : value;
+    if (typeof importPath !== "string" || !importPath.startsWith("./dist/")) {
+      continue;
+    }
+    const sourcePath = importPath
+      .replace(/^\.\/dist\//u, `packages/${packageDir}/src/`)
+      .replace(/\.mjs$/u, ".ts");
+    entries[entry] = sourcePath;
+  }
+  return Object.fromEntries(Object.entries(entries).toSorted(([a], [b]) => a.localeCompare(b)));
+}
+
+function buildAcpCoreDistEntries(): Record<string, string> {
+  return buildPackageDistEntriesFromExports("acp-core");
 }
 
 function buildTerminalCoreDistEntries(): Record<string, string> {
@@ -578,6 +628,18 @@ function buildUnifiedDistEntries(): Record<string, string> {
       ]),
     ),
     ...Object.fromEntries(
+      Object.entries(buildMediaCoreDistEntries()).map(([entry, source]) => [
+        `media-core/${entry}`,
+        source,
+      ]),
+    ),
+    ...Object.fromEntries(
+      Object.entries(buildAcpCoreDistEntries()).map(([entry, source]) => [
+        `acp-core/${entry}`,
+        source,
+      ]),
+    ),
+    ...Object.fromEntries(
       Object.entries(buildTerminalCoreDistEntries()).map(([entry, source]) => [
         `terminal-core/${entry}`,
         source,
@@ -668,6 +730,18 @@ export default defineConfig([
     dts: RUN_NODE_SKIP_DTS_BUILD ? false : undefined,
     entry: buildNormalizationCoreDistEntries(),
     outDir: tsdownPackageOutputRoot("normalization-core"),
+  }),
+  nodeWorkspacePackageBuildConfig({
+    clean: true,
+    dts: RUN_NODE_SKIP_DTS_BUILD ? false : undefined,
+    entry: buildMediaCoreDistEntries(),
+    outDir: tsdownPackageOutputRoot("media-core"),
+  }),
+  nodeWorkspacePackageBuildConfig({
+    clean: true,
+    dts: RUN_NODE_SKIP_DTS_BUILD ? false : undefined,
+    entry: buildAcpCoreDistEntries(),
+    outDir: tsdownPackageOutputRoot("acp-core"),
   }),
   nodeWorkspacePackageBuildConfig({
     clean: true,

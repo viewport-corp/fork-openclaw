@@ -1,9 +1,11 @@
+// Github Copilot tests cover index plugin behavior.
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import {
   clearRuntimeAuthProfileStoreSnapshots,
   ensureAuthProfileStore,
+  saveAuthProfileStore,
 } from "openclaw/plugin-sdk/agent-runtime";
 import { MAX_DATE_TIMESTAMP_MS, MAX_TIMER_TIMEOUT_MS } from "openclaw/plugin-sdk/number-runtime";
 import type {
@@ -52,7 +54,8 @@ const tempDirs: string[] = [];
 type RegisteredMemoryEmbeddingProvider = Parameters<
   OpenClawPluginApi["registerMemoryEmbeddingProvider"]
 >[0];
-type GithubCopilotTestProvider = {
+type RegisteredProvider = Parameters<OpenClawPluginApi["registerProvider"]>[0];
+type GithubCopilotTestProvider = RegisteredProvider & {
   auth: Array<{
     run: (ctx: unknown) => Promise<ProviderAuthResult | null>;
     runNonInteractive: (ctx: unknown) => Promise<OpenClawConfig | null>;
@@ -60,6 +63,7 @@ type GithubCopilotTestProvider = {
   catalog: {
     run: (ctx: unknown) => Promise<ProviderCatalogResult>;
   };
+  resolveThinkingProfile: NonNullable<RegisteredProvider["resolveThinkingProfile"]>;
 };
 type GithubCopilotTestModelCatalogProvider = {
   liveCatalog: (ctx: unknown) => Promise<readonly UnifiedModelCatalogEntry[] | null | undefined>;
@@ -84,8 +88,21 @@ async function createAgentDir() {
   return dir;
 }
 
-function registerProviderForTest() {
-  return registerProviderWithPluginConfig({});
+function writeExistingCopilotTokenProfile(agentDir: string) {
+  saveAuthProfileStore(
+    {
+      version: 1,
+      profiles: {
+        "github-copilot:github": {
+          type: "token",
+          provider: "github-copilot",
+          token: "existing-token",
+        },
+      },
+    },
+    agentDir,
+    { filterExternalAuthProfiles: false, syncExternalCli: false },
+  );
 }
 
 function requireFirstMockArg<T>(
@@ -136,6 +153,41 @@ function registerProviderWithPluginConfig(pluginConfig: Record<string, unknown>)
 }
 
 describe("github-copilot plugin", () => {
+  it("owns Claude replay thinking cleanup", () => {
+    const provider = registerProviderWithPluginConfig({});
+    const messages = [
+      {
+        role: "assistant",
+        content: [
+          { type: "thinking", thinking: "private", thinkingSignature: "sig" },
+          { type: "redacted_thinking", data: "opaque" },
+          { type: "text", text: "visible" },
+        ],
+      },
+    ];
+
+    expect(provider.buildReplayPolicy?.({ modelId: "claude-haiku-4.5" } as never)).toEqual({
+      dropThinkingBlocks: true,
+    });
+    expect(
+      provider.sanitizeReplayHistory?.({
+        modelId: "claude-haiku-4.5",
+        messages,
+      } as never),
+    ).toEqual([
+      {
+        role: "assistant",
+        content: [{ type: "text", text: "visible" }],
+      },
+    ]);
+    expect(
+      provider.sanitizeReplayHistory?.({
+        modelId: "gpt-5.4",
+        messages,
+      } as never),
+    ).toBe(messages);
+  });
+
   it("registers embedding provider", () => {
     const registerMemoryEmbeddingProviderMock =
       vi.fn<OpenClawPluginApi["registerMemoryEmbeddingProvider"]>();
@@ -183,6 +235,42 @@ describe("github-copilot plugin", () => {
 
     expect(result).toBeNull();
     expect(mocks.resolveCopilotApiToken).not.toHaveBeenCalled();
+  });
+
+  it("exposes xhigh thinking for catalog-supported Copilot reasoning efforts", () => {
+    const provider = registerProviderWithPluginConfig({});
+
+    const profile = provider.resolveThinkingProfile({
+      provider: "github-copilot",
+      modelId: "claude-opus-4.7-1m-internal",
+      compat: { supportedReasoningEfforts: ["low", "medium", "high", "xhigh"] },
+    });
+
+    expect(profile?.levels.map((level) => level.id)).toContain("xhigh");
+  });
+
+  it("exposes max thinking for catalog-supported Copilot reasoning efforts", () => {
+    const provider = registerProviderWithPluginConfig({});
+
+    const profile = provider.resolveThinkingProfile({
+      provider: "github-copilot",
+      modelId: "claude-fable-5",
+      compat: { supportedReasoningEfforts: ["low", "medium", "high", "max"] },
+    });
+
+    expect(profile?.levels.map((level) => level.id)).toContain("max");
+  });
+
+  it("does not expose max for non-adaptive Claude Copilot models", () => {
+    const provider = registerProviderWithPluginConfig({});
+
+    const profile = provider.resolveThinkingProfile({
+      provider: "github-copilot",
+      modelId: "claude-opus-4-5",
+      compat: { supportedReasoningEfforts: ["low", "medium", "high", "max"] },
+    });
+
+    expect(profile?.levels.map((level) => level.id)).not.toContain("max");
   });
 
   it("uses live plugin config to re-enable discovery after startup disable", async () => {
@@ -263,19 +351,7 @@ describe("github-copilot plugin", () => {
     const provider = registerProviderWithPluginConfig({});
     const method = provider.auth[0];
     const agentDir = await createAgentDir();
-    await fs.writeFile(
-      path.join(agentDir, "auth-profiles.json"),
-      JSON.stringify({
-        version: 1,
-        profiles: {
-          "github-copilot:github": {
-            type: "token",
-            provider: "github-copilot",
-            token: "existing-token",
-          },
-        },
-      }),
-    );
+    writeExistingCopilotTokenProfile(agentDir);
     const prompter = {
       confirm: vi.fn(async () => false),
       note: vi.fn(),
@@ -320,19 +396,7 @@ describe("github-copilot plugin", () => {
     const provider = registerProviderWithPluginConfig({});
     const method = provider.auth[0];
     const agentDir = await createAgentDir();
-    await fs.writeFile(
-      path.join(agentDir, "auth-profiles.json"),
-      JSON.stringify({
-        version: 1,
-        profiles: {
-          "github-copilot:github": {
-            type: "token",
-            provider: "github-copilot",
-            token: "existing-token",
-          },
-        },
-      }),
-    );
+    writeExistingCopilotTokenProfile(agentDir);
     const fetchMock = vi.fn(async (input: unknown, _init?: RequestInit) => {
       const target =
         typeof input === "string"
@@ -692,19 +756,7 @@ describe("github-copilot plugin", () => {
     const method = provider.auth[0];
     const agentDir = await createAgentDir();
     const runtime = { error: vi.fn(), exit: vi.fn() };
-    await fs.writeFile(
-      path.join(agentDir, "auth-profiles.json"),
-      JSON.stringify({
-        version: 1,
-        profiles: {
-          "github-copilot:github": {
-            type: "token",
-            provider: "github-copilot",
-            token: "existing-token",
-          },
-        },
-      }),
-    );
+    writeExistingCopilotTokenProfile(agentDir);
 
     const result = await method.runNonInteractive({
       authChoice: "github-copilot",

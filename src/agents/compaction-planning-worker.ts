@@ -1,7 +1,12 @@
+/**
+ * Runs CPU-heavy compaction planning in a worker thread when histories are
+ * large enough to risk starving the main event loop.
+ */
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { Worker } from "node:worker_threads";
 import { resolveTimerTimeoutMs } from "@openclaw/normalization-core/number-coercion";
+import { toErrorObject } from "../infra/errors.js";
 import {
   buildHistoryPrunePlan,
   buildOversizedFallbackPlan,
@@ -55,7 +60,12 @@ function runCompactionPlanningWorker(params: {
   workerUrl?: URL;
 }): Promise<CompactionPlanningWorkerValue> {
   if (params.signal?.aborted) {
-    return Promise.reject(params.signal.reason ?? new Error("compaction planning aborted"));
+    return Promise.reject(
+      toErrorObject(
+        params.signal.reason ?? new Error("compaction planning aborted"),
+        "Non-Error rejection",
+      ),
+    );
   }
 
   const workerUrl = params.workerUrl ?? resolveCompactionPlanningWorkerUrl();
@@ -93,7 +103,16 @@ function runCompactionPlanningWorker(params: {
     );
 
     const abort = () => {
-      settle(() => reject(params.signal?.reason ?? new Error("compaction planning aborted")), true);
+      settle(
+        () =>
+          reject(
+            toErrorObject(
+              params.signal?.reason ?? new Error("compaction planning aborted"),
+              "Non-Error rejection",
+            ),
+          ),
+        true,
+      );
     };
 
     const settle = (finish: () => void, terminate: boolean) => {
@@ -177,6 +196,7 @@ async function runWithUnavailableFallback<T extends CompactionPlanningWorkerValu
   }
 }
 
+/** Builds summary chunks, offloading large histories to the planning worker. */
 export async function buildSummaryChunksWithWorker(params: {
   messages: AgentMessage[];
   maxChunkTokens: number;
@@ -198,13 +218,14 @@ export async function buildSummaryChunksWithWorker(params: {
       chunks: buildSummaryChunks(params),
     }),
     isExpected: (
-      value,
-    ): value is Extract<CompactionPlanningWorkerValue, { kind: "summaryChunks" }> =>
-      value.kind === "summaryChunks",
+      valueCandidate,
+    ): valueCandidate is Extract<CompactionPlanningWorkerValue, { kind: "summaryChunks" }> =>
+      valueCandidate.kind === "summaryChunks",
   });
   return value.chunks;
 }
 
+/** Builds an oversized-message fallback plan, using the worker when worthwhile. */
 export async function buildOversizedFallbackPlanWithWorker(params: {
   messages: AgentMessage[];
   contextWindow: number;
@@ -226,9 +247,9 @@ export async function buildOversizedFallbackPlanWithWorker(params: {
       ...buildOversizedFallbackPlan(params),
     }),
     isExpected: (
-      value,
-    ): value is Extract<CompactionPlanningWorkerValue, { kind: "oversizedFallback" }> =>
-      value.kind === "oversizedFallback",
+      valueEntry,
+    ): valueEntry is Extract<CompactionPlanningWorkerValue, { kind: "oversizedFallback" }> =>
+      valueEntry.kind === "oversizedFallback",
   });
   return {
     smallMessages: value.smallMessages,
@@ -236,6 +257,7 @@ export async function buildOversizedFallbackPlanWithWorker(params: {
   };
 }
 
+/** Builds a staged summarization split plan with worker fallback. */
 export async function buildStageSplitPlanWithWorker(params: {
   messages: AgentMessage[];
   maxChunkTokens: number;
@@ -260,12 +282,15 @@ export async function buildStageSplitPlanWithWorker(params: {
       kind: "stageSplit" as const,
       ...buildStageSplitPlan(params),
     }),
-    isExpected: (value): value is Extract<CompactionPlanningWorkerValue, { kind: "stageSplit" }> =>
-      value.kind === "stageSplit",
+    isExpected: (
+      valueResult,
+    ): valueResult is Extract<CompactionPlanningWorkerValue, { kind: "stageSplit" }> =>
+      valueResult.kind === "stageSplit",
   });
   return value.mode === "split" ? { mode: "split", chunks: value.chunks } : { mode: "single" };
 }
 
+/** Builds a history-pruning plan with worker fallback for large transcripts. */
 export async function buildHistoryPrunePlanWithWorker(params: {
   messagesToSummarize: AgentMessage[];
   turnPrefixMessages: AgentMessage[];
@@ -296,9 +321,9 @@ export async function buildHistoryPrunePlanWithWorker(params: {
       ...buildHistoryPrunePlan(params),
     }),
     isExpected: (
-      value,
-    ): value is Extract<CompactionPlanningWorkerValue, { kind: "historyPrune" }> =>
-      value.kind === "historyPrune",
+      valueValue,
+    ): valueValue is Extract<CompactionPlanningWorkerValue, { kind: "historyPrune" }> =>
+      valueValue.kind === "historyPrune",
   });
   return {
     summarizableTokens: value.summarizableTokens,
@@ -308,6 +333,7 @@ export async function buildHistoryPrunePlanWithWorker(params: {
   };
 }
 
+/** Computes the adaptive compaction chunk ratio with worker fallback. */
 export async function computeAdaptiveChunkRatioWithWorker(params: {
   messages: AgentMessage[];
   contextWindow: number;
@@ -329,13 +355,14 @@ export async function computeAdaptiveChunkRatioWithWorker(params: {
       ratio: computeAdaptiveChunkRatio(params.messages, params.contextWindow),
     }),
     isExpected: (
-      value,
-    ): value is Extract<CompactionPlanningWorkerValue, { kind: "adaptiveChunkRatio" }> =>
-      value.kind === "adaptiveChunkRatio",
+      valueLocal,
+    ): valueLocal is Extract<CompactionPlanningWorkerValue, { kind: "adaptiveChunkRatio" }> =>
+      valueLocal.kind === "adaptiveChunkRatio",
   });
   return value.ratio;
 }
 
+/** Test-only worker internals for URL resolution and error-path coverage. */
 export const compactionPlanningWorkerTesting = {
   resolveCompactionPlanningWorkerUrl,
   runCompactionPlanningWorker,

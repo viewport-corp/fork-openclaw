@@ -1,11 +1,16 @@
 #!/usr/bin/env node
 
+// Verifies published plugin npm packages include built runtime entries and
+// metadata expected by OpenClaw.
 import { execFileSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 import * as tar from "tar";
+
+const DEFAULT_NPM_COMMAND_TIMEOUT_MS = 5 * 60 * 1000;
+const DEFAULT_NPM_COMMAND_MAX_BUFFER_BYTES = 16 * 1024 * 1024;
 
 function readPackageStringList(packageLabel, fieldName, value) {
   if (!Array.isArray(value)) {
@@ -193,21 +198,61 @@ export function resolveNpmPackFilename(output) {
     .split(/\r?\n/u)
     .findLast((line) => line.trim().length > 0)
     ?.trim();
-  if (typeof filename !== "string" || !filename.endsWith(".tgz")) {
+  if (
+    typeof filename !== "string" ||
+    !filename.endsWith(".tgz") ||
+    filename.includes("\0") ||
+    filename !== path.basename(filename) ||
+    filename !== path.win32.basename(filename)
+  ) {
     throw new Error(`npm pack did not report a tarball filename`);
   }
   return filename;
 }
 
+export function readPositiveIntEnv(name, fallback, env = process.env) {
+  const text = String(env[name] ?? fallback).trim();
+  if (!/^\d+$/u.test(text)) {
+    throw new Error(`invalid ${name}: ${text}`);
+  }
+  const value = Number(text);
+  if (!Number.isSafeInteger(value) || value <= 0) {
+    throw new Error(`invalid ${name}: ${text}`);
+  }
+  return value;
+}
+
+export function readPluginNpmCommandOptions(env = process.env) {
+  return {
+    encoding: "utf8",
+    killSignal: "SIGKILL",
+    maxBuffer: readPositiveIntEnv(
+      "OPENCLAW_PLUGIN_NPM_COMMAND_MAX_BUFFER_BYTES",
+      DEFAULT_NPM_COMMAND_MAX_BUFFER_BYTES,
+      env,
+    ),
+    stdio: ["ignore", "pipe", "pipe"],
+    timeout: readPositiveIntEnv(
+      "OPENCLAW_PLUGIN_NPM_COMMAND_TIMEOUT_MS",
+      DEFAULT_NPM_COMMAND_TIMEOUT_MS,
+      env,
+    ),
+  };
+}
+
+export function runPluginNpmCommand(args, params = {}) {
+  const execFileSyncImpl = params.execFileSyncImpl ?? execFileSync;
+  return execFileSyncImpl("npm", args, readPluginNpmCommandOptions(params.env));
+}
+
 function npmPack(spec, destinationDir) {
-  const output = execFileSync(
-    "npm",
-    ["pack", spec, "--ignore-scripts", "--pack-destination", destinationDir],
-    {
-      encoding: "utf8",
-      stdio: ["ignore", "pipe", "pipe"],
-    },
-  );
+  const output = runPluginNpmCommand([
+    "pack",
+    spec,
+    "--ignore-scripts",
+    "--pack-destination",
+    destinationDir,
+  ]);
   const filename = resolveNpmPackFilename(output);
   return path.isAbsolute(filename) ? filename : path.join(destinationDir, filename);
 }
@@ -223,26 +268,13 @@ export function parseNpmReadmeMetadata(raw) {
 }
 
 function npmViewReadme(spec) {
-  return execFileSync("npm", ["view", spec, "readme", "--json", "--prefer-online"], {
-    encoding: "utf8",
-    stdio: ["ignore", "pipe", "pipe"],
-  });
+  return runPluginNpmCommand(["view", spec, "readme", "--json", "--prefer-online"]);
 }
 
 function sleep(ms) {
-  return new Promise((resolve) => setTimeout(resolve, ms));
-}
-
-export function readPositiveIntEnv(name, fallback, env = process.env) {
-  const text = String(env[name] ?? fallback).trim();
-  if (!/^\d+$/u.test(text)) {
-    throw new Error(`invalid ${name}: ${text}`);
-  }
-  const value = Number(text);
-  if (!Number.isSafeInteger(value) || value <= 0) {
-    throw new Error(`invalid ${name}: ${text}`);
-  }
-  return value;
+  return new Promise((resolve) => {
+    setTimeout(resolve, ms);
+  });
 }
 
 async function packPublishedPackage(spec, destinationDir) {
@@ -326,6 +358,28 @@ function readPackedPackageReadme(packageDir, files) {
   return fs.readFileSync(path.join(packageDir, readmePath), "utf8").trim();
 }
 
+export function usage() {
+  return "Usage: node scripts/verify-plugin-npm-published-runtime.mjs <package-spec>";
+}
+
+export function parseVerifyPublishedPluginRuntimeArgs(argv) {
+  const args = argv[0] === "--" ? argv.slice(1) : argv;
+  const first = args[0]?.trim();
+  if (first === "--help" || first === "-h") {
+    return { help: true, spec: "" };
+  }
+  if (!first) {
+    throw new Error(usage());
+  }
+  if (first.startsWith("-")) {
+    throw new Error(`Unknown plugin npm verifier option: ${first}`);
+  }
+  if (args.length > 1) {
+    throw new Error(`Unexpected plugin npm verifier argument: ${args[1]}`);
+  }
+  return { help: false, spec: first };
+}
+
 export async function verifyPublishedPluginRuntime(spec) {
   const workingDir = fs.mkdtempSync(path.join(os.tmpdir(), "openclaw-plugin-npm-runtime."));
   try {
@@ -364,21 +418,24 @@ export async function verifyPublishedPluginRuntime(spec) {
 }
 
 async function main(argv) {
-  const spec = argv[0]?.trim();
-  if (!spec) {
-    throw new Error("Usage: node scripts/verify-plugin-npm-published-runtime.mjs <package-spec>");
+  const args = parseVerifyPublishedPluginRuntimeArgs(argv);
+  if (args.help) {
+    console.log(usage());
+    return;
   }
-  const result = await verifyPublishedPluginRuntime(spec);
+  const result = await verifyPublishedPluginRuntime(args.spec);
   console.log(
     `plugin-npm-published-runtime-check: ${result.packageName}@${result.version} OK (${result.fileCount} files, ${result.readmeLength} readme chars)`,
   );
 }
 
 if (import.meta.url === pathToFileURL(process.argv[1] ?? "").href) {
-  main(process.argv.slice(2)).catch((error) => {
-    console.error(
-      `plugin-npm-published-runtime-check: ${error instanceof Error ? error.message : String(error)}`,
-    );
-    process.exitCode = 1;
-  });
+  main(process.argv.slice(2)).catch(
+    /** @param {unknown} error */ (error) => {
+      console.error(
+        `plugin-npm-published-runtime-check: ${error instanceof Error ? error.message : String(error)}`,
+      );
+      process.exitCode = 1;
+    },
+  );
 }

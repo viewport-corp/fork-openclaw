@@ -1,3 +1,4 @@
+// Loads plugin doctor contracts from manifest-owned metadata.
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -104,16 +105,14 @@ function resolveContractApiPath(rootDir: string): string | null {
   const orderedExtensions = RUNNING_FROM_BUILT_ARTIFACT
     ? CONTRACT_API_EXTENSIONS
     : ([...CONTRACT_API_EXTENSIONS.slice(3), ...CONTRACT_API_EXTENSIONS.slice(0, 3)] as const);
-  for (const extension of orderedExtensions) {
-    const candidate = path.join(rootDir, `doctor-contract-api${extension}`);
-    if (fs.existsSync(candidate)) {
-      return candidate;
-    }
-  }
-  for (const extension of orderedExtensions) {
-    const candidate = path.join(rootDir, `contract-api${extension}`);
-    if (fs.existsSync(candidate)) {
-      return candidate;
+  for (const basename of ["doctor-contract-api", "contract-api"]) {
+    for (const extension of orderedExtensions) {
+      for (const baseDir of [rootDir, path.join(rootDir, "dist")]) {
+        const candidate = path.join(baseDir, `${basename}${extension}`);
+        if (fs.existsSync(candidate)) {
+          return candidate;
+        }
+      }
     }
   }
   return null;
@@ -245,6 +244,13 @@ export function collectRelevantDoctorPluginIds(raw: unknown): string[] {
     }
   }
 
+  const modelProviders = asNullableRecord(asNullableRecord(root.models)?.providers);
+  if (modelProviders) {
+    for (const providerId of Object.keys(modelProviders)) {
+      ids.add(providerId);
+    }
+  }
+
   if (hasLegacyElevenLabsTalkFields(root)) {
     ids.add("elevenlabs");
   }
@@ -275,6 +281,13 @@ export function collectRelevantDoctorPluginIdsForTouchedPaths(params: {
     }
     if (first === "plugins") {
       if (second !== "entries" || !third) {
+        return collectRelevantDoctorPluginIds(params.raw);
+      }
+      ids.add(third);
+      continue;
+    }
+    if (first === "models") {
+      if (second !== "providers" || !third) {
         return collectRelevantDoctorPluginIds(params.raw);
       }
       ids.add(third);
@@ -407,15 +420,6 @@ export function listPluginDoctorSessionRouteStateOwners(params?: {
     }
   }
   return [...owners.values()].toSorted((left, right) => left.id.localeCompare(right.id));
-}
-
-export function listPluginDoctorStateMigrations(params?: {
-  config?: OpenClawConfig;
-  workspaceDir?: string;
-  env?: NodeJS.ProcessEnv;
-  pluginIds?: readonly string[];
-}): PluginDoctorStateMigration[] {
-  return listPluginDoctorStateMigrationEntries(params).map((entry) => entry.migration);
 }
 
 export function listPluginDoctorStateMigrationEntries(params?: {

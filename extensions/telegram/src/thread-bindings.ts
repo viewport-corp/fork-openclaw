@@ -1,3 +1,4 @@
+// Telegram plugin module implements thread bindings behavior.
 import { createHash } from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
@@ -21,6 +22,7 @@ import { logVerbose } from "openclaw/plugin-sdk/runtime-env";
 import { resolveStateDir } from "openclaw/plugin-sdk/state-paths";
 import { normalizeOptionalString } from "openclaw/plugin-sdk/string-coerce-runtime";
 import { getTelegramRuntime } from "./runtime.js";
+import { loadTelegramSendModule } from "./send-runtime.js";
 import { resolveTelegramToken } from "./token.js";
 
 const DEFAULT_THREAD_BINDING_IDLE_TIMEOUT_MS = 24 * 60 * 60 * 1000;
@@ -30,13 +32,7 @@ const STORE_VERSION = 1;
 export const TELEGRAM_THREAD_BINDINGS_NAMESPACE = "telegram.thread-bindings";
 export const TELEGRAM_THREAD_BINDINGS_MAX_ENTRIES = 5_000;
 
-let telegramSendModulePromise: Promise<typeof import("./send.js")> | undefined;
 let threadBindingStoreForTest: PluginStateSyncKeyedStore<TelegramThreadBindingRecord> | undefined;
-
-async function loadTelegramSendModule() {
-  telegramSendModulePromise ??= import("./send.js");
-  return await telegramSendModulePromise;
-}
 
 type TelegramBindingTargetKind = "subagent" | "acp";
 
@@ -462,7 +458,7 @@ function persistBindingsSafely(params: {
   bindings?: TelegramThreadBindingRecord[];
   reason: string;
 }): void {
-  void enqueuePersistBindings(params).catch((err) => {
+  void enqueuePersistBindings(params).catch((err: unknown) => {
     logVerbose(
       `telegram thread bindings persist failed (${params.accountId}, ${params.reason}): ${String(err)}`,
     );
@@ -560,7 +556,7 @@ export function createTelegramThreadBindingManager(params: {
       sessionEntry.entry.status === "failed" ||
       sessionEntry.entry.status === "killed" ||
       sessionEntry.entry.status === "timeout" ||
-      sessionEntry.entry.acp?.state === "error";
+      sessionEntry.acp?.state === "error";
     if (isStale) {
       staleSessionKeys.add(targetSessionKey);
     }
@@ -628,12 +624,12 @@ export function createTelegramThreadBindingManager(params: {
         return null;
       }
       const key = resolveBindingKey({ accountId, conversationId });
-      const existing = getThreadBindingsState().bindingsByAccountConversation.get(key);
-      if (!existing) {
+      const existingLocal = getThreadBindingsState().bindingsByAccountConversation.get(key);
+      if (!existingLocal) {
         return null;
       }
       const nextRecord: TelegramThreadBindingRecord = {
-        ...existing,
+        ...existingLocal,
         lastActivityAt: normalizeTimestampMs(at ?? Date.now()),
       };
       getThreadBindingsState().bindingsByAccountConversation.set(key, nextRecord);

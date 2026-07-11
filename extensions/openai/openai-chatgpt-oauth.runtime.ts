@@ -1,3 +1,4 @@
+// Openai plugin module implements openai chatgpt oauth behavior.
 import path from "node:path";
 import { formatErrorMessage } from "openclaw/plugin-sdk/error-runtime";
 import { resolveTimerTimeoutMs } from "openclaw/plugin-sdk/number-runtime";
@@ -93,8 +94,9 @@ async function runOpenAIOAuthTlsPreflight(options?: {
 }): Promise<OpenAIOAuthTlsPreflightResult> {
   const timeoutMs = resolveTimerTimeoutMs(options?.timeoutMs, 5000);
   const fetchImpl = options?.fetchImpl ?? fetch;
+  let response: Response | undefined;
   try {
-    await fetchImpl(openAIAuthProbeUrl, {
+    response = await fetchImpl(openAIAuthProbeUrl, {
       method: "GET",
       redirect: "manual",
       signal: AbortSignal.timeout(timeoutMs),
@@ -108,6 +110,10 @@ async function runOpenAIOAuthTlsPreflight(options?: {
       code: failure.code,
       message: failure.message,
     };
+  } finally {
+    if (response?.bodyUsed !== true) {
+      await response?.body?.cancel().catch(() => undefined);
+    }
   }
 }
 
@@ -163,7 +169,7 @@ function settleAfterDelay(params: {
 }
 
 function waitForeverForPromptInput(): Promise<string> {
-  return new Promise<string>(() => undefined);
+  return new Promise<string>(() => {});
 }
 
 function createOpenAICodexOAuthError(
@@ -321,9 +327,9 @@ export async function loginOpenAICodexOAuth(params: {
       localBrowserMessage: localBrowserMessage ?? "Complete sign-in in browser...",
       manualPromptMessage: manualInputPromptMessage,
     });
-    const onAuth: typeof baseOnAuth = async (event) => {
+    const onAuth = (event: Parameters<typeof baseOnAuth>[0]) => {
       browserAuthStarted = true;
-      await baseOnAuth(event);
+      void baseOnAuth(event);
     };
 
     const creds = await loginOpenAICodex({

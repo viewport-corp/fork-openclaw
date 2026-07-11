@@ -1,148 +1,24 @@
 {
   "name": "@openclaw/whatsapp",
-  "version": "2026.5.30",
+  "version": "2026.6.11",
   "lockfileVersion": 3,
   "requires": true,
   "packages": {
     "": {
       "name": "@openclaw/whatsapp",
-      "version": "2026.5.30",
+      "version": "2026.6.11",
       "dependencies": {
-        "audio-decode": "3.10.1",
+        "audio-decode": "2.2.3",
         "baileys": "7.0.0-rc13",
         "typebox": "1.1.39"
       },
       "peerDependencies": {
-        "openclaw": ">=2026.5.30"
+        "openclaw": ">=2026.6.11"
       },
       "peerDependenciesMeta": {
         "openclaw": {
           "optional": true
         }
-      }
-    },
-    "node_modules/@audio/decode-aac": {
-      "version": "1.1.3",
-      "resolved": "https://registry.npmjs.org/@audio/decode-aac/-/decode-aac-1.1.3.tgz",
-      "integrity": "sha512-emyA+pFa+o9N728t5HpcInT6FZZtaFtl68ex7UW7iBOTv6DrN4jxASj1D9KQO0S86cpu6t2u9hW9X/99Srfjog==",
-      "license": "GPL-2.0",
-      "engines": {
-        "node": ">=16"
-      }
-    },
-    "node_modules/@audio/decode-aiff": {
-      "version": "1.1.1",
-      "resolved": "https://registry.npmjs.org/@audio/decode-aiff/-/decode-aiff-1.1.1.tgz",
-      "integrity": "sha512-Q4hH7tNtoTnVVwaT/XWUITfDeG9Y0KVRFkeWa1Ksl8FkUgutemVASiIoT7PvIchlhseq4haDdvQGu5cuLHdbNw==",
-      "license": "MIT",
-      "engines": {
-        "node": ">=16"
-      }
-    },
-    "node_modules/@audio/decode-amr": {
-      "version": "1.1.1",
-      "resolved": "https://registry.npmjs.org/@audio/decode-amr/-/decode-amr-1.1.1.tgz",
-      "integrity": "sha512-iIiY4YHaJ30isZVejhB/taO/jy7NVIveK/j6xPITqz/M/5JXC1tK5PMZ5PJ+Kni0LKGB+QN2BBonefKNkKr/VA==",
-      "license": "Apache-2.0",
-      "engines": {
-        "node": ">=16"
-      }
-    },
-    "node_modules/@audio/decode-caf": {
-      "version": "1.1.1",
-      "resolved": "https://registry.npmjs.org/@audio/decode-caf/-/decode-caf-1.1.1.tgz",
-      "integrity": "sha512-svwj9ZJ9k89T0O4t7Ca5G6AeCusJQOQo4gdJsDlCHw01E4XJm4ok3Oqu2vorgT7BoS1l1Sm2Ef4ib3cr1M9Gbw==",
-      "license": "MIT",
-      "engines": {
-        "node": ">=16"
-      }
-    },
-    "node_modules/@audio/decode-flac": {
-      "version": "1.1.0",
-      "resolved": "https://registry.npmjs.org/@audio/decode-flac/-/decode-flac-1.1.0.tgz",
-      "integrity": "sha512-d47Cxf91m1A7G0ketvWDmnn+qI9UaqEuZF0JpdVgGjjnfZQZ/3C8U3MM6nSsRaz4JZ904HtMkLUMF0yNEHXbJQ==",
-      "license": "MIT",
-      "dependencies": {
-        "@wasm-audio-decoders/flac": "^0.2.10"
-      },
-      "engines": {
-        "node": ">=16"
-      }
-    },
-    "node_modules/@audio/decode-mp3": {
-      "version": "1.1.0",
-      "resolved": "https://registry.npmjs.org/@audio/decode-mp3/-/decode-mp3-1.1.0.tgz",
-      "integrity": "sha512-eOBqdICwjQ0P9z6ei0wXmXVTW/tIiQ4YGsG3QMFJsdrGORhNQh6paQz53utIcVndmri9xfQStqerxMGt+82ygQ==",
-      "license": "MIT",
-      "dependencies": {
-        "mpg123-decoder": "^1.0.3"
-      },
-      "engines": {
-        "node": ">=16"
-      }
-    },
-    "node_modules/@audio/decode-opus": {
-      "version": "1.0.0",
-      "resolved": "https://registry.npmjs.org/@audio/decode-opus/-/decode-opus-1.0.0.tgz",
-      "integrity": "sha512-IwoBu72t09g/T5QKiOSJ1bPBE0fGQkhGh0LwVFH7Uj1xgZ18hVywoA9dCIWxlpnPqz/ZFnAdY7qaKbeEPfGJ+g==",
-      "license": "MIT",
-      "dependencies": {
-        "ogg-opus-decoder": "^1.7.3"
-      },
-      "engines": {
-        "node": ">=16"
-      }
-    },
-    "node_modules/@audio/decode-qoa": {
-      "version": "1.0.0",
-      "resolved": "https://registry.npmjs.org/@audio/decode-qoa/-/decode-qoa-1.0.0.tgz",
-      "integrity": "sha512-4O57YMprL+AZtxPVOgyDhUr2C+bVcp2cHrMKzBc4zo1ZJgITLZtfVA8TklTJEiLbvVfG2F0j44xHOTqCFhqvbA==",
-      "license": "MIT",
-      "dependencies": {
-        "qoa-format": "^1.0.1"
-      },
-      "engines": {
-        "node": ">=16"
-      }
-    },
-    "node_modules/@audio/decode-vorbis": {
-      "version": "1.0.0",
-      "resolved": "https://registry.npmjs.org/@audio/decode-vorbis/-/decode-vorbis-1.0.0.tgz",
-      "integrity": "sha512-8TR9V0GQuExgUMHOSYmBE/OreJ9D7YQH78ntPhCxxWM0IeV3qTE3To+cxZVSRg8bMXl6rB7GEGWMmJ8uLbkZlg==",
-      "license": "MIT",
-      "dependencies": {
-        "@wasm-audio-decoders/ogg-vorbis": "^0.1.20"
-      },
-      "engines": {
-        "node": ">=16"
-      }
-    },
-    "node_modules/@audio/decode-wav": {
-      "version": "1.2.0",
-      "resolved": "https://registry.npmjs.org/@audio/decode-wav/-/decode-wav-1.2.0.tgz",
-      "integrity": "sha512-Q6VicCGHeoqCiLnTDAaZI3kHCZGd24km/BVLZMBF2vOSbknwnqUEkWs4RRtKUfMX+KBtwAgihkzF0Aw4Y3DkBw==",
-      "license": "MIT"
-    },
-    "node_modules/@audio/decode-webm": {
-      "version": "1.2.1",
-      "resolved": "https://registry.npmjs.org/@audio/decode-webm/-/decode-webm-1.2.1.tgz",
-      "integrity": "sha512-UnlDUaPI7PF+I9neTF5LJ7NNrFgvi0zj8PsPcvkSf+NWW08UnbxgsN9WgtpY731R8MPMM10cZKGEoN0kqxT15Q==",
-      "license": "MIT",
-      "dependencies": {
-        "@wasm-audio-decoders/ogg-vorbis": "^0.1.20",
-        "opus-decoder": "^0.7.6"
-      },
-      "engines": {
-        "node": ">=16"
-      }
-    },
-    "node_modules/@audio/decode-wma": {
-      "version": "1.1.2",
-      "resolved": "https://registry.npmjs.org/@audio/decode-wma/-/decode-wma-1.1.2.tgz",
-      "integrity": "sha512-zjmvnuhjSx6i8C8xPLxoNwfLxBvTeo2zf8L0Z8LM1H3HlwyWZEEfAlIppNf794f/mhsnbRAnwCpwQ1HklMIJrg==",
-      "license": "GPL-2.0-or-later",
-      "engines": {
-        "node": ">=16"
       }
     },
     "node_modules/@borewit/text-codec": {
@@ -240,10 +116,73 @@
       "integrity": "sha512-k2ENnmBugE/rzQfEcdWHcCY+/FM3VLzH9cYEsbdsoqrvzAKRhUZeRNhAZvB8OitQJ1TBed3yqWtdjzS6wJKBwg==",
       "license": "MIT"
     },
+    "node_modules/@protobufjs/aspromise": {
+      "version": "1.1.2",
+      "resolved": "https://registry.npmjs.org/@protobufjs/aspromise/-/aspromise-1.1.2.tgz",
+      "integrity": "sha512-j+gKExEuLmKwvz3OgROXtrJ2UG2x8Ch2YZUxahh+s1F2HZ+wAceUNLkvy6zKCPVRkU++ZWQrdxsUeQXmcg4uoQ==",
+      "license": "BSD-3-Clause"
+    },
+    "node_modules/@protobufjs/base64": {
+      "version": "1.1.2",
+      "resolved": "https://registry.npmjs.org/@protobufjs/base64/-/base64-1.1.2.tgz",
+      "integrity": "sha512-AZkcAA5vnN/v4PDqKyMR5lx7hZttPDgClv83E//FMNhR2TMcLUhfRUBHCmSl0oi9zMgDDqRUJkSxO3wm85+XLg==",
+      "license": "BSD-3-Clause"
+    },
+    "node_modules/@protobufjs/codegen": {
+      "version": "2.0.5",
+      "resolved": "https://registry.npmjs.org/@protobufjs/codegen/-/codegen-2.0.5.tgz",
+      "integrity": "sha512-zgXFLzW3Ap33e6d0Wlj4MGIm6Ce8O89n/apUaGNB/jx+hw+ruWEp7EwGUshdLKVRCxZW12fp9r40E1mQrf/34g==",
+      "license": "BSD-3-Clause"
+    },
+    "node_modules/@protobufjs/eventemitter": {
+      "version": "1.1.1",
+      "resolved": "https://registry.npmjs.org/@protobufjs/eventemitter/-/eventemitter-1.1.1.tgz",
+      "integrity": "sha512-vW1GmwMZNnL+gMRaovlh9yZX74kc+TTU3FObkkurpMaRtBfLP3ldjS9KQWlwZgraRE0+dheEEoAxdzcJQ8eXZg==",
+      "license": "BSD-3-Clause"
+    },
+    "node_modules/@protobufjs/fetch": {
+      "version": "1.1.1",
+      "resolved": "https://registry.npmjs.org/@protobufjs/fetch/-/fetch-1.1.1.tgz",
+      "integrity": "sha512-GpptLrs57adMSuHi3VNj0mAF8dwh36LMaYF6XyJ6JMWlVsc+t42tm1HSEDmOs3A8fC9yyeisgLhsTVQokOZ0zw==",
+      "license": "BSD-3-Clause",
+      "dependencies": {
+        "@protobufjs/aspromise": "^1.1.1"
+      }
+    },
+    "node_modules/@protobufjs/float": {
+      "version": "1.0.2",
+      "resolved": "https://registry.npmjs.org/@protobufjs/float/-/float-1.0.2.tgz",
+      "integrity": "sha512-Ddb+kVXlXst9d+R9PfTIxh1EdNkgoRe5tOX6t01f1lYWOvJnSPDBlG241QLzcyPdoNTsblLUdujGSE4RzrTZGQ==",
+      "license": "BSD-3-Clause"
+    },
+    "node_modules/@protobufjs/inquire": {
+      "version": "1.1.2",
+      "resolved": "https://registry.npmjs.org/@protobufjs/inquire/-/inquire-1.1.2.tgz",
+      "integrity": "sha512-pa0vFRuws4wkvaXKK1uXZMAwAX4/t8ANaJo45iw/oQHNQ9q5xUzwgFmVJGXiga2BeN+zpX7Vf9vmsiIa2J+MUw==",
+      "license": "BSD-3-Clause"
+    },
+    "node_modules/@protobufjs/path": {
+      "version": "1.1.2",
+      "resolved": "https://registry.npmjs.org/@protobufjs/path/-/path-1.1.2.tgz",
+      "integrity": "sha512-6JOcJ5Tm08dOHAbdR3GrvP+yUUfkjG5ePsHYczMFLq3ZmMkAD98cDgcT2iA1lJ9NVwFd4tH/iSSoe44YWkltEA==",
+      "license": "BSD-3-Clause"
+    },
+    "node_modules/@protobufjs/pool": {
+      "version": "1.1.0",
+      "resolved": "https://registry.npmjs.org/@protobufjs/pool/-/pool-1.1.0.tgz",
+      "integrity": "sha512-0kELaGSIDBKvcgS4zkjz1PeddatrjYcmMWOlAuAPwAeccUrPHdUqo/J6LiymHHEiJT5NrF1UVwxY14f+fy4WQw==",
+      "license": "BSD-3-Clause"
+    },
+    "node_modules/@protobufjs/utf8": {
+      "version": "1.1.1",
+      "resolved": "https://registry.npmjs.org/@protobufjs/utf8/-/utf8-1.1.1.tgz",
+      "integrity": "sha512-oOAWABowe8EAbMyWKM0tYDKi8Yaox52D+HWZhAIJqQXbqe0xI/GV7FhLWqlEKreMkfDjshR5FKgi3mnle0h6Eg==",
+      "license": "BSD-3-Clause"
+    },
     "node_modules/@thi.ng/bitstream": {
-      "version": "2.4.52",
-      "resolved": "https://registry.npmjs.org/@thi.ng/bitstream/-/bitstream-2.4.52.tgz",
-      "integrity": "sha512-uOOJ4QxJ8lK7juR2gGZHbISPsPGLp4w7PLFG7pTPG+t+8Hkanl3Syu3LMPq0DGJbAX7U5l1TrKvLoNeNta3OsA==",
+      "version": "2.4.53",
+      "resolved": "https://registry.npmjs.org/@thi.ng/bitstream/-/bitstream-2.4.53.tgz",
+      "integrity": "sha512-nhSs378SbSVrHNGb2mRDMVeHn+j2Ss78lK4+G/8IYAVBh461sBcSpj80FkBhDyTAr/yAa53ZFlyrKjkj7Volvw==",
       "funding": [
         {
           "type": "github",
@@ -260,16 +199,16 @@
       ],
       "license": "Apache-2.0",
       "dependencies": {
-        "@thi.ng/errors": "^2.6.14"
+        "@thi.ng/errors": "^2.6.15"
       },
       "engines": {
         "node": ">=18"
       }
     },
     "node_modules/@thi.ng/errors": {
-      "version": "2.6.14",
-      "resolved": "https://registry.npmjs.org/@thi.ng/errors/-/errors-2.6.14.tgz",
-      "integrity": "sha512-dSqLPZh5wOe329Ks2pJqoDmtjSv2g4KpXEP5/IQ5J9qvrEyNrRBCuaKHUKYUltQ1OUHGd9L5hBqGJl65Hlnu+g==",
+      "version": "2.6.15",
+      "resolved": "https://registry.npmjs.org/@thi.ng/errors/-/errors-2.6.15.tgz",
+      "integrity": "sha512-kkd42XRB+D1PVI9IRyEVK/URF0fgTE7SscoehHyuuZ6UHn/4N60ODiTwOONJHRHxLQVQLJ7EwM0t6AuxBufRUA==",
       "funding": [
         {
           "type": "github",
@@ -311,6 +250,15 @@
       "resolved": "https://registry.npmjs.org/@tokenizer/token/-/token-0.3.0.tgz",
       "integrity": "sha512-OvjF+z51L3ov0OyAU0duzsYuvO01PH7x4t6DJx+guahgTnBHkhJdG7soQeTSFLWN3efnHyibZ4Z8l2EuWwJN3A==",
       "license": "MIT"
+    },
+    "node_modules/@types/node": {
+      "version": "25.9.1",
+      "resolved": "https://registry.npmjs.org/@types/node/-/node-25.9.1.tgz",
+      "integrity": "sha512-xfrlY7UD5rMJk3ZVJP8BNzS28J36YJg+xp+LPXV1TdWxr8uMH5A860QNxYDGQe/ylDSgjxE52Q9VnO7p75tJxg==",
+      "license": "MIT",
+      "dependencies": {
+        "undici-types": ">=7.24.0 <7.24.7"
+      }
     },
     "node_modules/@wasm-audio-decoders/common": {
       "version": "9.0.7",
@@ -381,28 +329,26 @@
         "node": ">=8.0.0"
       }
     },
+    "node_modules/audio-buffer": {
+      "version": "5.0.0",
+      "resolved": "https://registry.npmjs.org/audio-buffer/-/audio-buffer-5.0.0.tgz",
+      "integrity": "sha512-gsDyj1wwUp8u7NBB+eW6yhLb9ICf+0eBmDX8NGaAS00w8/fLqFdxUlL5Ge/U8kB64DlQhdonxYC59dXy1J7H/w==",
+      "license": "MIT"
+    },
     "node_modules/audio-decode": {
-      "version": "3.10.1",
-      "resolved": "https://registry.npmjs.org/audio-decode/-/audio-decode-3.10.1.tgz",
-      "integrity": "sha512-aIMSNFtZaZeSq1mYFXga7ZRglguLQq8WpQv1CDiLmqnkIrtrTYUO56XrxfkwGdQ/+Ek0VJ91TKGRdpARa1NJaQ==",
+      "version": "2.2.3",
+      "resolved": "https://registry.npmjs.org/audio-decode/-/audio-decode-2.2.3.tgz",
+      "integrity": "sha512-Z0lHvMayR/Pad9+O9ddzaBJE0DrhZkQlStrC1RwcAHF3AhQAsdwKHeLGK8fYKyp2DDU6xHxzGb4CLMui12yVrg==",
       "license": "MIT",
-      "workspaces": [
-        "packages/*"
-      ],
       "dependencies": {
-        "@audio/decode-aac": "^1.0.2",
-        "@audio/decode-aiff": "^1.0.0",
-        "@audio/decode-amr": "^1.0.0",
-        "@audio/decode-caf": "^1.0.0",
-        "@audio/decode-flac": "^1.1.0",
-        "@audio/decode-mp3": "^1.1.0",
-        "@audio/decode-opus": "^1.0.0",
-        "@audio/decode-qoa": "^1.0.0",
-        "@audio/decode-vorbis": "^1.0.0",
-        "@audio/decode-wav": "^1.2.0",
-        "@audio/decode-webm": "^1.0.0",
-        "@audio/decode-wma": "^1.0.0",
-        "audio-type": "^2.4.0"
+        "@wasm-audio-decoders/flac": "^0.2.4",
+        "@wasm-audio-decoders/ogg-vorbis": "^0.1.15",
+        "audio-buffer": "^5.0.0",
+        "audio-type": "^2.2.1",
+        "mpg123-decoder": "^1.0.0",
+        "node-wav": "^0.0.2",
+        "ogg-opus-decoder": "^1.6.12",
+        "qoa-format": "^1.0.1"
       }
     },
     "node_modules/audio-type": {
@@ -663,6 +609,15 @@
         "node": ">=18"
       }
     },
+    "node_modules/node-wav": {
+      "version": "0.0.2",
+      "resolved": "https://registry.npmjs.org/node-wav/-/node-wav-0.0.2.tgz",
+      "integrity": "sha512-M6Rm/bbG6De/gKGxOpeOobx/dnGuP0dz40adqx38boqHhlWssBJZgLCPBNtb9NkrmnKYiV04xELq+R6PFOnoLA==",
+      "license": "MIT",
+      "engines": {
+        "node": ">=4.4.0"
+      }
+    },
     "node_modules/ogg-opus-decoder": {
       "version": "1.7.3",
       "resolved": "https://registry.npmjs.org/ogg-opus-decoder/-/ogg-opus-decoder-1.7.3.tgz",
@@ -783,12 +738,23 @@
       "license": "MIT"
     },
     "node_modules/protobufjs": {
-      "version": "8.4.0",
-      "resolved": "https://registry.npmjs.org/protobufjs/-/protobufjs-8.4.0.tgz",
-      "integrity": "sha512-iriNhQ57SYA5Jbdi+41AyPdx6jPPkFO7DODzkOBmqFhgYn/JzX2HxgxYPY18eQAs3CP/AWqtPvkWn8rclRAxdQ==",
+      "version": "7.6.3",
+      "resolved": "https://registry.npmjs.org/protobufjs/-/protobufjs-7.6.3.tgz",
+      "integrity": "sha512-+k0vdJKNdW+Vu+dYe8tZA/VvQb6XKNWexC6URwBFXxNnjLJz9nQJCemGyNgRAWD+B7+nGNc9qMPGwcD7s4nzUw==",
       "hasInstallScript": true,
       "license": "BSD-3-Clause",
       "dependencies": {
+        "@protobufjs/aspromise": "^1.1.2",
+        "@protobufjs/base64": "^1.1.2",
+        "@protobufjs/codegen": "^2.0.5",
+        "@protobufjs/eventemitter": "^1.1.1",
+        "@protobufjs/fetch": "^1.1.1",
+        "@protobufjs/float": "^1.0.2",
+        "@protobufjs/inquire": "^1.1.2",
+        "@protobufjs/path": "^1.1.2",
+        "@protobufjs/pool": "^1.1.0",
+        "@protobufjs/utf8": "^1.1.1",
+        "@types/node": ">=13.7.0",
         "long": "^5.3.2"
       },
       "engines": {
@@ -891,9 +857,9 @@
       }
     },
     "node_modules/thread-stream": {
-      "version": "3.1.0",
-      "resolved": "https://registry.npmjs.org/thread-stream/-/thread-stream-3.1.0.tgz",
-      "integrity": "sha512-OqyPZ9u96VohAyMfJykzmivOrY2wfMSf3C5TtFJVgN+Hm6aj+voFhlK+kZEIv2FBh1X6Xp3DlnCOfEQ3B2J86A==",
+      "version": "3.2.0",
+      "resolved": "https://registry.npmjs.org/thread-stream/-/thread-stream-3.2.0.tgz",
+      "integrity": "sha512-zLBvqpwr4Esa0kRjcrzGU6zL25lePWaCLMx0RQFrmteozIfeNdaMLpG5U7PeHzvlFkAWaRKA9/KVW4F60iB+qw==",
       "license": "MIT",
       "dependencies": {
         "real-require": "^0.2.0"
@@ -940,6 +906,12 @@
       "funding": {
         "url": "https://github.com/sponsors/sindresorhus"
       }
+    },
+    "node_modules/undici-types": {
+      "version": "7.24.6",
+      "resolved": "https://registry.npmjs.org/undici-types/-/undici-types-7.24.6.tgz",
+      "integrity": "sha512-WRNW+sJgj5OBN4/0JpHFqtqzhpbnV0GuB+OozA9gCL7a993SmU+1JBZCzLNxYsbMfIeDL+lTsphD5jN5N+n0zg==",
+      "license": "MIT"
     },
     "node_modules/whatsapp-rust-bridge": {
       "version": "0.5.4",
