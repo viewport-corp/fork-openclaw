@@ -10,6 +10,7 @@ import type {
   ReplyToMode,
   SessionThreadBindingsConfig,
 } from "./types.base.js";
+import type { ChannelBotLoopProtectionConfig } from "./types.bot-loop-protection.js";
 import type {
   ChannelHealthMonitorConfig,
   ChannelHeartbeatVisibilityConfig,
@@ -115,6 +116,10 @@ export type TelegramAccountConfig = {
   customCommands?: TelegramCustomCommand[];
   /** Allow channel-initiated config writes (default: true). */
   configWrites?: boolean;
+  /** Process inbound messages authored by other Telegram bots. Default: true. */
+  allowBots?: boolean;
+  /** Sliding-window guard for bot-to-bot Telegram message loops. */
+  botLoopProtection?: ChannelBotLoopProtectionConfig;
   /**
    * Controls how Telegram direct chats (DMs) are handled:
    * - "pairing" (default): unknown senders get a pairing code; owner must approve

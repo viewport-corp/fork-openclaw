@@ -519,12 +519,15 @@ describe("session accessor file-backed seam", () => {
       expectedSnapshotRevision: snapshot.snapshotRevision,
       sessionEntry: {
         ...snapshot.currentEntry,
+        sessionId: "existing-session",
         updatedAt: 20,
       },
       sessionKey,
       snapshotEntry: {
         ...snapshot.currentEntry,
+        sessionId: "existing-session",
         status: "done",
+        updatedAt: 10,
       },
       storePath,
     });
@@ -545,6 +548,7 @@ describe("session accessor file-backed seam", () => {
       expectedSnapshotRevision: emptySnapshot.snapshotRevision,
       sessionEntry: {
         ...snapshot.currentEntry,
+        sessionId: "existing-session",
         updatedAt: 20,
       },
       sessionKey,
