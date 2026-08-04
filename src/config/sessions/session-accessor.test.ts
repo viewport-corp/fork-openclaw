@@ -350,12 +350,14 @@ describe("session accessor file-backed seam", () => {
       activeSessionKey: sessionKey,
       agentId: "main",
       expectedRevision: snapshot.revision,
+      expectedSnapshotRevision: snapshot.snapshotRevision,
       previousEntry: snapshot.currentEntry,
       sessionEntry: {
         sessionId: "next-session",
         updatedAt: 20,
       },
       sessionKey,
+      snapshotEntry: snapshot.currentEntry,
       storePath,
     });
 
@@ -370,6 +372,194 @@ describe("session accessor file-backed seam", () => {
     });
     expect(committed.previousSessionTranscript.transcriptArchived).toBe(true);
     expect(fs.existsSync(previousTranscript)).toBe(false);
+  });
+
+  it("commits reply session initialization despite concurrent same-session metadata updates", async () => {
+    const sessionKey = "agent:main:main";
+    await upsertSessionEntry(
+      { sessionKey, storePath },
+      {
+        sessionId: "existing-session",
+        status: "running",
+        totalTokens: 10,
+        updatedAt: 10,
+      },
+    );
+
+    const snapshot = loadReplySessionInitializationSnapshot({ sessionKey, storePath });
+    await updateSessionEntry(
+      { sessionKey, storePath },
+      () => ({
+        status: "done",
+        totalTokens: 25,
+        updatedAt: 20,
+      }),
+      { skipMaintenance: true },
+    );
+
+    const committed = await commitReplySessionInitialization({
+      activeSessionKey: sessionKey,
+      agentId: "main",
+      expectedRevision: snapshot.revision,
+      expectedSnapshotRevision: snapshot.snapshotRevision,
+      sessionEntry: {
+        ...snapshot.currentEntry,
+        sessionId: "existing-session",
+        updatedAt: 30,
+      },
+      sessionKey,
+      snapshotEntry: snapshot.currentEntry,
+      storePath,
+    });
+
+    expect(committed.ok).toBe(true);
+    if (!committed.ok) {
+      throw new Error("expected reply session initialization to commit");
+    }
+    expect(committed.sessionEntry).toMatchObject({
+      sessionId: "existing-session",
+      status: "done",
+      totalTokens: 25,
+      updatedAt: 30,
+    });
+    expect(loadSessionEntry({ sessionKey, storePath })).toMatchObject({
+      sessionId: "existing-session",
+      status: "done",
+      totalTokens: 25,
+      updatedAt: 30,
+    });
+  });
+
+  it("preserves disjoint nested metadata updates during reply session initialization", async () => {
+    const sessionKey = "agent:main:main";
+    await upsertSessionEntry(
+      { sessionKey, storePath },
+      {
+        pluginExtensions: {
+          "issue-476": {
+            nested: { base: true, conflict: "base", removeMe: true },
+          },
+        },
+        sessionId: "existing-session",
+        updatedAt: 10,
+      },
+    );
+
+    const snapshot = loadReplySessionInitializationSnapshot({ sessionKey, storePath });
+    await updateSessionEntry(
+      { sessionKey, storePath },
+      (current) => ({
+        pluginExtensions: {
+          ...current.pluginExtensions,
+          "issue-476": {
+            ...current.pluginExtensions?.["issue-476"],
+            nested: { base: true, conflict: "current", currentOnly: true },
+          },
+        },
+        updatedAt: 20,
+      }),
+      { skipMaintenance: true },
+    );
+
+    const committed = await commitReplySessionInitialization({
+      activeSessionKey: sessionKey,
+      agentId: "main",
+      expectedRevision: snapshot.revision,
+      expectedSnapshotRevision: snapshot.snapshotRevision,
+      sessionEntry: {
+        ...snapshot.currentEntry,
+        pluginExtensions: {
+          ...snapshot.currentEntry?.pluginExtensions,
+          "issue-476": {
+            ...snapshot.currentEntry?.pluginExtensions?.["issue-476"],
+            nested: {
+              base: true,
+              conflict: "prepared",
+              preparedOnly: true,
+              removeMe: true,
+            },
+          },
+        },
+        sessionId: "existing-session",
+        updatedAt: 30,
+      },
+      sessionKey,
+      snapshotEntry: snapshot.currentEntry,
+      storePath,
+    });
+
+    expect(committed.ok).toBe(true);
+    if (!committed.ok) {
+      throw new Error("expected reply session initialization to commit");
+    }
+    expect(committed.sessionEntry.pluginExtensions?.["issue-476"]?.nested).toEqual({
+      base: true,
+      conflict: "prepared",
+      currentOnly: true,
+      preparedOnly: true,
+    });
+  });
+
+  it("rejects a reply session snapshot entry that does not match its snapshot revision", async () => {
+    const sessionKey = "agent:main:main";
+    await upsertSessionEntry(
+      { sessionKey, storePath },
+      {
+        sessionId: "existing-session",
+        status: "running",
+        updatedAt: 10,
+      },
+    );
+
+    const snapshot = loadReplySessionInitializationSnapshot({ sessionKey, storePath });
+    const committed = await commitReplySessionInitialization({
+      activeSessionKey: sessionKey,
+      agentId: "main",
+      expectedRevision: snapshot.revision,
+      expectedSnapshotRevision: snapshot.snapshotRevision,
+      sessionEntry: {
+        ...snapshot.currentEntry,
+        sessionId: "existing-session",
+        updatedAt: 20,
+      },
+      sessionKey,
+      snapshotEntry: {
+        ...snapshot.currentEntry,
+        sessionId: "existing-session",
+        status: "done",
+        updatedAt: 10,
+      },
+      storePath,
+    });
+
+    expect(committed).toMatchObject({
+      ok: false,
+      reason: "stale-snapshot",
+    });
+
+    const emptySnapshot = loadReplySessionInitializationSnapshot({
+      sessionKey: "agent:main:missing",
+      storePath,
+    });
+    const missingBaselineCommit = await commitReplySessionInitialization({
+      activeSessionKey: sessionKey,
+      agentId: "main",
+      expectedRevision: snapshot.revision,
+      expectedSnapshotRevision: emptySnapshot.snapshotRevision,
+      sessionEntry: {
+        ...snapshot.currentEntry,
+        sessionId: "existing-session",
+        updatedAt: 20,
+      },
+      sessionKey,
+      snapshotEntry: emptySnapshot.currentEntry,
+      storePath,
+    });
+    expect(missingBaselineCommit).toMatchObject({
+      ok: false,
+      reason: "stale-snapshot",
+    });
+    expect(loadSessionEntry({ sessionKey, storePath })).toEqual(snapshot.currentEntry);
   });
 
   it("does not reuse the previous transcript file when initialization rotates session ids", async () => {
@@ -389,6 +579,7 @@ describe("session accessor file-backed seam", () => {
       activeSessionKey: sessionKey,
       agentId: "main",
       expectedRevision: snapshot.revision,
+      expectedSnapshotRevision: snapshot.snapshotRevision,
       previousEntry: snapshot.currentEntry,
       sessionEntry: {
         ...snapshot.currentEntry,
@@ -397,6 +588,7 @@ describe("session accessor file-backed seam", () => {
         updatedAt: 20,
       },
       sessionKey,
+      snapshotEntry: snapshot.currentEntry,
       storePath,
     });
 
@@ -429,11 +621,13 @@ describe("session accessor file-backed seam", () => {
       activeSessionKey: sessionKey,
       agentId: "main",
       expectedRevision: snapshot.revision,
+      expectedSnapshotRevision: snapshot.snapshotRevision,
       sessionEntry: {
         sessionId: "stale-session",
         updatedAt: 30,
       },
       sessionKey,
+      snapshotEntry: snapshot.currentEntry,
       storePath,
     });
 

@@ -824,6 +824,7 @@ async function initSessionStateAttempt(
     activeSessionKey: sessionKey,
     agentId,
     expectedRevision: initializationSnapshot.revision,
+    expectedSnapshotRevision: initializationSnapshot.snapshotRevision,
     fallbackSessionFile,
     maintenanceConfig,
     onArchiveError: (error, sourcePath) => {
@@ -854,6 +855,7 @@ async function initSessionStateAttempt(
     retiredEntry: retiredLegacyMainDelivery,
     sessionEntry,
     sessionKey,
+    snapshotEntry: initializationSnapshot.currentEntry,
     storePath,
   });
   if (!committed.ok) {

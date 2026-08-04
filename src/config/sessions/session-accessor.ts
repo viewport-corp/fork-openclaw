@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { isDeepStrictEqual } from "node:util";
 import {
   acquireSessionWriteLock,
   resolveSessionWriteLockOptions,
@@ -380,6 +381,7 @@ export type ReplySessionInitializationSnapshot = {
   currentEntry?: SessionEntry;
   readEntry: (sessionKey: string) => SessionEntry | undefined;
   revision: string;
+  snapshotRevision: string;
 };
 
 export type ReplySessionInitializationCommitContext = {
@@ -972,7 +974,141 @@ function cloneSessionEntries(store: Record<string, SessionEntry>): Record<string
   );
 }
 
+type ReplySessionMergeRecord = Record<string, unknown>;
+
+function collectReplySessionMergeKeys(...entries: ReplySessionMergeRecord[]): string[] {
+  const keys = new Set<string>();
+  for (const entry of entries) {
+    for (const key of Object.keys(entry)) {
+      keys.add(key);
+    }
+  }
+  return [...keys];
+}
+
+function replySessionMergeFieldUnchanged(params: {
+  leftHasValue: boolean;
+  leftValue: unknown;
+  rightHasValue: boolean;
+  rightValue: unknown;
+}): boolean {
+  const { leftHasValue, leftValue, rightHasValue, rightValue } = params;
+  const leftUnset = !leftHasValue || leftValue === undefined;
+  const rightUnset = !rightHasValue || rightValue === undefined;
+  if (leftUnset && rightUnset) {
+    return true;
+  }
+  return (
+    leftHasValue === rightHasValue &&
+    (Object.is(leftValue, rightValue) || isDeepStrictEqual(leftValue, rightValue))
+  );
+}
+
+function isReplySessionMergeRecord(value: unknown): value is ReplySessionMergeRecord {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return false;
+  }
+  const prototype = Object.getPrototypeOf(value);
+  return prototype === Object.prototype || prototype === null;
+}
+
+function setReplySessionMergeField(
+  target: ReplySessionMergeRecord,
+  key: string,
+  value: unknown,
+): void {
+  Object.defineProperty(target, key, {
+    configurable: true,
+    enumerable: true,
+    value,
+    writable: true,
+  });
+}
+
+function mergeConcurrentReplySessionRecord(params: {
+  current: ReplySessionMergeRecord;
+  prepared: ReplySessionMergeRecord;
+  snapshot: ReplySessionMergeRecord;
+}): ReplySessionMergeRecord {
+  const { current, prepared, snapshot } = params;
+  const merged: ReplySessionMergeRecord = { ...prepared };
+  for (const key of collectReplySessionMergeKeys(current, prepared, snapshot)) {
+    const currentHasValue = Object.hasOwn(current, key);
+    const snapshotHasValue = Object.hasOwn(snapshot, key);
+    const preparedHasValue = Object.hasOwn(prepared, key);
+    const currentValue = current[key];
+    const snapshotValue = snapshot[key];
+    const preparedValue = prepared[key];
+    const currentChanged = !replySessionMergeFieldUnchanged({
+      leftHasValue: currentHasValue,
+      leftValue: currentValue,
+      rightHasValue: snapshotHasValue,
+      rightValue: snapshotValue,
+    });
+    const preparedChanged = !replySessionMergeFieldUnchanged({
+      leftHasValue: preparedHasValue,
+      leftValue: preparedValue,
+      rightHasValue: snapshotHasValue,
+      rightValue: snapshotValue,
+    });
+    if (currentChanged && !preparedChanged) {
+      if (currentHasValue) {
+        setReplySessionMergeField(merged, key, currentValue);
+      } else {
+        delete merged[key];
+      }
+      continue;
+    }
+    if (
+      currentChanged &&
+      preparedChanged &&
+      currentHasValue &&
+      preparedHasValue &&
+      isReplySessionMergeRecord(currentValue) &&
+      isReplySessionMergeRecord(preparedValue) &&
+      (!snapshotHasValue || isReplySessionMergeRecord(snapshotValue))
+    ) {
+      setReplySessionMergeField(
+        merged,
+        key,
+        mergeConcurrentReplySessionRecord({
+          current: currentValue,
+          prepared: preparedValue,
+          snapshot: isReplySessionMergeRecord(snapshotValue) ? snapshotValue : {},
+        }),
+      );
+    }
+  }
+  return merged;
+}
+
+function mergeConcurrentReplySessionMetadata(params: {
+  currentEntry: SessionEntry;
+  preparedEntry: SessionEntry;
+  snapshotEntry?: SessionEntry;
+}): SessionEntry {
+  const { currentEntry, preparedEntry, snapshotEntry } = params;
+  if (!snapshotEntry || preparedEntry.sessionId !== snapshotEntry.sessionId) {
+    return preparedEntry;
+  }
+  return mergeConcurrentReplySessionRecord({
+    current: currentEntry,
+    prepared: preparedEntry,
+    snapshot: snapshotEntry,
+  }) as SessionEntry;
+}
+
 function createReplySessionInitializationRevision(entry: SessionEntry | undefined): string {
+  if (!entry) {
+    return JSON.stringify(null);
+  }
+  return JSON.stringify({
+    sessionId: entry.sessionId,
+    ...(entry.sessionFile === undefined ? {} : { sessionFile: entry.sessionFile }),
+  });
+}
+
+function createReplySessionInitializationSnapshotRevision(entry: SessionEntry | undefined): string {
   return JSON.stringify(entry ?? null);
 }
 
@@ -1392,6 +1528,7 @@ export function loadReplySessionInitializationSnapshot(params: {
       return entry ? { ...entry } : undefined;
     },
     revision: createReplySessionInitializationRevision(currentEntry),
+    snapshotRevision: createReplySessionInitializationSnapshotRevision(currentEntry),
   };
 }
 
@@ -1404,6 +1541,7 @@ export async function commitReplySessionInitialization(params: {
   activeSessionKey: string;
   agentId: string;
   expectedRevision: string;
+  expectedSnapshotRevision: string;
   fallbackSessionFile?: string;
   maintenanceConfig?: ResolvedSessionMaintenanceConfig;
   onArchiveError?: (error: unknown, sourcePath: string) => void;
@@ -1415,6 +1553,7 @@ export async function commitReplySessionInitialization(params: {
   retiredEntry?: SessionEntryRetirement;
   sessionEntry: SessionEntry;
   sessionKey: string;
+  snapshotEntry: SessionEntry | undefined;
   storePath: string;
 }): Promise<ReplySessionInitializationCommitResult> {
   const committed = await updateSessionStore(
@@ -1423,6 +1562,19 @@ export async function commitReplySessionInitialization(params: {
       const resolved = resolveSessionStoreEntry({ store, sessionKey: params.sessionKey });
       const currentEntry = resolved.existing ? { ...resolved.existing } : undefined;
       const revision = createReplySessionInitializationRevision(currentEntry);
+      if (
+        createReplySessionInitializationRevision(params.snapshotEntry) !==
+          params.expectedRevision ||
+        createReplySessionInitializationSnapshotRevision(params.snapshotEntry) !==
+          params.expectedSnapshotRevision
+      ) {
+        return {
+          ok: false,
+          ...(currentEntry ? { currentEntry } : {}),
+          reason: "stale-snapshot",
+          revision,
+        };
+      }
       if (revision !== params.expectedRevision) {
         return {
           ok: false,
@@ -1450,7 +1602,13 @@ export async function commitReplySessionInitialization(params: {
         sessionEntry: preparedSessionEntry,
         storePath: params.storePath,
       });
-      store[resolved.normalizedKey] = sessionEntry;
+      store[resolved.normalizedKey] = currentEntry
+        ? mergeConcurrentReplySessionMetadata({
+            currentEntry,
+            preparedEntry: sessionEntry,
+            snapshotEntry: params.snapshotEntry,
+          })
+        : sessionEntry;
       if (params.retiredEntry) {
         store[params.retiredEntry.key] = params.retiredEntry.entry;
       }

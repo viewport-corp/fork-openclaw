@@ -11,6 +11,7 @@ import {
 import { hasConfiguredSecretInput } from "./types.secrets.js";
 import { ToolPolicySchema } from "./zod-schema.agent-runtime.js";
 import { NativeExecApprovalEnableModeSchema } from "./zod-schema.approvals.js";
+import { ChannelBotLoopProtectionSchema } from "./zod-schema.channels-config.js";
 import {
   ChannelHealthMonitorSchema,
   ChannelHeartbeatVisibilitySchema,
@@ -265,6 +266,8 @@ export const TelegramAccountSchemaBase = z
     commands: ProviderCommandsSchema,
     customCommands: z.array(TelegramCustomCommandSchema).optional(),
     configWrites: z.boolean().optional(),
+    allowBots: z.boolean().optional(),
+    botLoopProtection: ChannelBotLoopProtectionSchema.optional(),
     dmPolicy: DmPolicySchema.optional().default("pairing"),
     botToken: SecretInputSchema.optional().register(sensitive),
     tokenFile: z.string().optional(),
