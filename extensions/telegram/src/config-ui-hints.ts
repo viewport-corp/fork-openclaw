@@ -18,30 +18,6 @@ export const telegramChannelConfigUiHints = {
     label: "Telegram DM Policy",
     help: 'Direct message access control ("pairing" recommended). "open" requires channels.telegram.allowFrom=["*"].',
   },
-  allowBots: {
-    label: "Telegram Allow Bot Messages",
-    help: "Process inbound messages authored by other bots (Bot API 10.0 bot-to-bot mode; default: true). Bot senders still pass allowFrom/group gating. Set false to drop all bot-authored messages.",
-  },
-  botLoopProtection: {
-    label: "Telegram Bot Loop Protection",
-    help: "Sliding-window guard for bot-to-bot Telegram loops. Default is enabled whenever allowBots lets bot-authored messages reach dispatch.",
-  },
-  "botLoopProtection.enabled": {
-    label: "Telegram Bot Loop Protection Enabled",
-    help: "Enable the bot-pair loop guard. Defaults to true when bot-authored messages are processed.",
-  },
-  "botLoopProtection.maxEventsPerWindow": {
-    label: "Telegram Bot Pair Events Per Window",
-    help: "Maximum messages a single Telegram bot pair may exchange in the configured window before suppression starts. Default: 20.",
-  },
-  "botLoopProtection.windowSeconds": {
-    label: "Telegram Bot Loop Window Seconds",
-    help: "Sliding window length in seconds for Telegram bot-pair loop budgets. Default: 60.",
-  },
-  "botLoopProtection.cooldownSeconds": {
-    label: "Telegram Bot Loop Cooldown Seconds",
-    help: "Seconds to suppress a Telegram bot pair after it exceeds the loop budget. Default: 60.",
-  },
   configWrites: {
     label: "Telegram Config Writes",
     help: "Allow Telegram to write config in response to channel events/commands (default: true).",
@@ -61,10 +37,6 @@ export const telegramChannelConfigUiHints = {
   "mentionPatterns.denyIn": {
     label: "Telegram Mention Pattern Denylist",
     help: "Telegram group chat IDs or chatId:topic:threadId topic IDs where configured regex mention patterns are disabled. Native bot mentions still trigger.",
-  },
-  includeGroupHistoryContext: {
-    label: "Telegram Group History Context",
-    help: 'Controls prior Telegram group messages included in model context: "mention-only" keeps messages addressed to the bot and bot replies (default), "recent" includes recent room history, and "none" disables group history context.',
   },
   "commands.native": {
     label: "Telegram Native Commands",
@@ -192,7 +164,7 @@ export const telegramChannelConfigUiHints = {
   },
   trustedLocalFileRoots: {
     label: "Telegram Trusted Local File Roots",
-    help: "Trusted local filesystem roots for self-hosted Telegram Bot API absolute file_path values. Only absolute paths inside these roots are read directly; all other absolute paths are rejected.",
+    help: "Trusted local filesystem roots for self-hosted Telegram Bot API file_path values. Exact in-root paths are read directly; container paths under /var/lib/telegram-bot-api can map into a host volume mount. Other absolute paths are rejected.",
   },
   autoTopicLabel: {
     label: "Telegram Auto Topic Label",
