@@ -83,9 +83,8 @@ describe("resolveTelegramBotLoopProtection", () => {
 });
 
 describe("shouldDropTelegramBotMessage", () => {
-  it("keeps bot messages by default and when allowBots is true", () => {
-    expect(shouldDropTelegramBotMessage({ msg: { from: botFrom } })).toBe(false);
-    expect(shouldDropTelegramBotMessage({ msg: { from: botFrom }, telegramCfg: {} })).toBe(false);
+  it("drops bot messages unless allowBots is explicitly true", () => {
+    expect(shouldDropTelegramBotMessage({ msg: { from: botFrom } })).toBe(true);
     expect(
       shouldDropTelegramBotMessage({ msg: { from: botFrom }, telegramCfg: { allowBots: true } }),
     ).toBe(false);

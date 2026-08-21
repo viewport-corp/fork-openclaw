@@ -10,6 +10,7 @@ import type {
   ReplyToMode,
   SessionThreadBindingsConfig,
 } from "./types.base.js";
+import type { ChannelBotLoopProtectionConfig } from "./types.bot-loop-protection.js";
 import type {
   ChannelHealthMonitorConfig,
   ChannelHeartbeatVisibilityConfig,
@@ -67,7 +68,6 @@ export type TelegramNetworkConfig = {
 export type TelegramInlineButtonsScope = "off" | "dm" | "group" | "all" | "allowlist";
 export type TelegramStreamingMode = "off" | "partial" | "block" | "progress";
 export type TelegramExecApprovalTarget = "dm" | "channel" | "both";
-export type TelegramGroupHistoryContextMode = "none" | "mention-only" | "recent";
 
 export type TelegramPreviewStreamingConfig = Omit<ChannelPreviewStreamingConfig, "preview"> & {
   preview?: ChannelStreamingPreviewConfig;
@@ -153,10 +153,20 @@ export type TelegramAccountConfig = {
   groupPolicy?: GroupPolicy;
   /** Scope configured groupChat mentionPatterns to selected Telegram chat/thread IDs. */
   mentionPatterns?: MentionPatternsPolicyConfig;
+  /**
+   * Process inbound messages authored by other bots (Telegram Bot API 10.0
+   * bot-to-bot mode). Default: false — set true explicitly after enabling
+   * Bot-to-Bot Communication Mode in BotFather. Bot senders still pass the
+   * regular allowFrom/group gating and pair-loop protection.
+   */
+  allowBots?: boolean;
+  /**
+   * Sliding-window guard that suppresses runaway two-bot exchanges. Default on
+   * whenever bot-authored messages reach dispatch. See #58789 / #79077.
+   */
+  botLoopProtection?: ChannelBotLoopProtectionConfig;
   /** Supplemental context visibility policy (all|allowlist|allowlist_quote). */
   contextVisibility?: ContextVisibilityMode;
-  /** Controls prior Telegram group messages included in prompt context. Default: mention-only. */
-  includeGroupHistoryContext?: TelegramGroupHistoryContextMode;
   /** Max group messages to keep as history context (0 disables). */
   historyLimit?: number;
   /** Max DM turns to keep as history context. */

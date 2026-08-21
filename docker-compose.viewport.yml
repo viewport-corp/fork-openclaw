@@ -17,13 +17,13 @@ services:
         OPENCLAW_INSTALL_BROWSER: "1"
         OPENCLAW_DOCKER_APT_PACKAGES: ${OPENCLAW_DOCKER_APT_PACKAGES:-openssh-client gh jq rsync dnsutils iproute2 iputils-ping netcat-openbsd procps lsof less vim-tiny python3 python3-pip ca-certificates curl git}
     volumes:
-      - ${OPENCLAW_CONFIG_DIR:-${HOME:-/tmp}/.openclaw}:/home/node/.openclaw
-      - ${OPENCLAW_WORKSPACE_DIR:-${HOME:-/tmp}/.openclaw/workspace}:/home/node/.openclaw/workspace
-      - ${OPENCLAW_DOCKER_SOCK:-/var/run/docker.sock}:/var/run/docker.sock
-      - /srv/viewport:/srv/viewport
-      - /opt/platformx:/opt/platformx
-      - ${OPENCLAW_SSH_DIR:-/srv/viewport/runtime/openclaw-fresh/ssh}:/home/node/.ssh:ro
-      - ${OPENCLAW_AUTH_SECRET_DIR:-/root/.openclaw-auth-profile-secrets}:/home/node/.config/openclaw
+      - "${OPENCLAW_CONFIG_DIR:-/tmp/.openclaw}:/home/node/.openclaw"
+      - "${OPENCLAW_WORKSPACE_DIR:-/tmp/.openclaw/workspace}:/home/node/.openclaw/workspace"
+      - "${OPENCLAW_DOCKER_SOCK:-/var/run/docker.sock}:/var/run/docker.sock"
+      - "/srv/viewport:/srv/viewport"
+      - "/opt/platformx:/opt/platformx"
+      - "${OPENCLAW_SSH_DIR:-/srv/viewport/runtime/openclaw-fresh/ssh}:/home/node/.ssh:ro"
+      - "${OPENCLAW_AUTH_SECRET_DIR:-/root/.openclaw-auth-profile-secrets}:/home/node/.config/openclaw"
     group_add:
       - "${DOCKER_GID:-999}"
 
@@ -43,12 +43,12 @@ services:
         OPENCLAW_INSTALL_BROWSER: "1"
         OPENCLAW_DOCKER_APT_PACKAGES: ${OPENCLAW_DOCKER_APT_PACKAGES:-openssh-client gh jq rsync dnsutils iproute2 iputils-ping netcat-openbsd procps lsof less vim-tiny python3 python3-pip ca-certificates curl git}
     volumes:
-      - ${OPENCLAW_CONFIG_DIR:-${HOME:-/tmp}/.openclaw}:/home/node/.openclaw
-      - ${OPENCLAW_WORKSPACE_DIR:-${HOME:-/tmp}/.openclaw/workspace}:/home/node/.openclaw/workspace
-      - ${OPENCLAW_DOCKER_SOCK:-/var/run/docker.sock}:/var/run/docker.sock
-      - /srv/viewport:/srv/viewport
-      - /opt/platformx:/opt/platformx
-      - ${OPENCLAW_SSH_DIR:-/srv/viewport/runtime/openclaw-fresh/ssh}:/home/node/.ssh:ro
-      - ${OPENCLAW_AUTH_SECRET_DIR:-/root/.openclaw-auth-profile-secrets}:/home/node/.config/openclaw
+      - "${OPENCLAW_CONFIG_DIR:-/tmp/.openclaw}:/home/node/.openclaw"
+      - "${OPENCLAW_WORKSPACE_DIR:-/tmp/.openclaw/workspace}:/home/node/.openclaw/workspace"
+      - "${OPENCLAW_DOCKER_SOCK:-/var/run/docker.sock}:/var/run/docker.sock"
+      - "/srv/viewport:/srv/viewport"
+      - "/opt/platformx:/opt/platformx"
+      - "${OPENCLAW_SSH_DIR:-/srv/viewport/runtime/openclaw-fresh/ssh}:/home/node/.ssh:ro"
+      - "${OPENCLAW_AUTH_SECRET_DIR:-/root/.openclaw-auth-profile-secrets}:/home/node/.config/openclaw"
     group_add:
       - "${DOCKER_GID:-999}"

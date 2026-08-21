@@ -38,6 +38,7 @@ vi.mock("./bot/delivery.resolve-media.runtime.js", async () => {
         throw new actual.MediaFetchError(
           "fetch_failed",
           err instanceof Error ? err.message : String(err),
+          { cause: err },
         );
       }
     },
@@ -66,6 +67,9 @@ const {
 } = harness;
 const { createTelegramBotCore: createTelegramBotBase, setTelegramBotRuntimeForTest } =
   await import("./bot-core.js");
+const { runWithTelegramUpdateProcessingFrame, withTelegramSpooledReplayUpdate } =
+  await import("./bot-processing-outcome.js");
+const { MediaFetchError } = await import("./telegram-media.runtime.js");
 
 let createTelegramBot: (
   opts: import("./bot.types.js").TelegramBotOptions,
@@ -156,6 +160,8 @@ function createChannelPostContext(params: {
   mediaGroupId?: string;
   photoFileId?: string;
   getFileResult?: Record<string, unknown>;
+  from?: { id: number; is_bot: boolean; first_name: string };
+  meId?: number;
 }) {
   const photoFileId = params.photoFileId;
   return {
@@ -165,10 +171,11 @@ function createChannelPostContext(params: {
       date: params.date,
       ...(params.caption ? { caption: params.caption } : {}),
       ...(params.text ? { text: params.text } : {}),
+      ...(params.from ? { from: params.from } : {}),
       ...(params.mediaGroupId ? { media_group_id: params.mediaGroupId } : {}),
       ...(photoFileId ? { photo: [{ file_id: photoFileId }] } : {}),
     },
-    me: { username: "openclaw_bot" },
+    me: { ...(params.meId != null ? { id: params.meId } : {}), username: "openclaw_bot" },
     getFile: async () =>
       params.getFileResult ?? (photoFileId ? { file_path: `photos/${photoFileId}.jpg` } : {}),
   };
@@ -265,6 +272,53 @@ describe("createTelegramBot channel_post media", () => {
     saveMediaBuffer.mockReset();
     readRemoteMediaBuffer.mockReset();
     rootRead.mockReset();
+  });
+
+  it("drops bot-authored channel posts unless allowBots is explicitly true", async () => {
+    loadConfig.mockReturnValue({
+      channels: {
+        telegram: {
+          groupPolicy: "open",
+          groups: { "-100777111222": { enabled: true, requireMention: false } },
+        },
+      },
+    });
+    const handler = getChannelPostHandler();
+    const ctx = createChannelPostContext({
+      messageId: 901,
+      date: 1736380800,
+      text: "peer bot",
+      from: { id: 555, is_bot: true, first_name: "PeerBot" },
+      meId: 999,
+    });
+
+    await handler(ctx);
+
+    expect(replySpy).not.toHaveBeenCalled();
+  });
+
+  it("drops channel posts echoed from the current bot even when bots are allowed", async () => {
+    loadConfig.mockReturnValue({
+      channels: {
+        telegram: {
+          allowBots: true,
+          groupPolicy: "open",
+          groups: { "-100777111222": { enabled: true, requireMention: false } },
+        },
+      },
+    });
+    const handler = getChannelPostHandler();
+    const ctx = createChannelPostContext({
+      messageId: 902,
+      date: 1736380800,
+      text: "own echo",
+      from: { id: 999, is_bot: true, first_name: "OpenClaw" },
+      meId: 999,
+    });
+
+    await handler(ctx);
+
+    expect(replySpy).not.toHaveBeenCalled();
   });
 
   it("buffers channel_post media groups and processes them together", async () => {
@@ -447,6 +501,196 @@ describe("createTelegramBot channel_post media", () => {
     } finally {
       fetchSpy.mockRestore();
     }
+  });
+
+  it("warns instead of dispatching a placeholder when Telegram getFile fails (#100000)", async () => {
+    loadConfig.mockReturnValue({
+      channels: { telegram: { dmPolicy: "open", allowFrom: ["*"] } },
+    });
+    sendMessageSpy.mockClear();
+    replySpy.mockClear();
+
+    createTelegramBot({ token: "tok" });
+    const handler = getOnHandler("message") as (ctx: Record<string, unknown>) => Promise<void>;
+
+    await handler({
+      message: {
+        chat: { id: 1234, type: "private" },
+        message_id: 100000,
+        date: 1736380800,
+        document: { file_id: "doc-100000", file_name: "report.pdf" },
+        from: { id: 55, is_bot: false, first_name: "u" },
+      },
+      me: { username: "openclaw_bot" },
+      getFile: async () => {
+        throw new Error("Network request for 'getFile' failed!");
+      },
+    });
+
+    await waitForMockCalls(sendMessageSpy, 1);
+    expect(sendMessageSpy).toHaveBeenCalledWith(
+      1234,
+      "⚠️ Failed to download media. Please try again.",
+      expect.objectContaining({
+        reply_parameters: expect.objectContaining({ message_id: 100000 }),
+      }),
+    );
+    expect(replySpy).not.toHaveBeenCalled();
+    expect(saveRemoteMedia).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    { mediaMaxMb: 100, expectedLimitMb: 20 },
+    { mediaMaxMb: 10, expectedLimitMb: 10 },
+  ])(
+    "reports the effective $expectedLimitMb MB limit for Telegram Bot API failures (#100000)",
+    async ({ mediaMaxMb, expectedLimitMb }) => {
+      loadConfig.mockReturnValue({
+        channels: { telegram: { dmPolicy: "open", allowFrom: ["*"], mediaMaxMb } },
+      });
+      sendMessageSpy.mockClear();
+      replySpy.mockClear();
+
+      createTelegramBot({ token: "tok" });
+      const handler = getOnHandler("message") as (ctx: Record<string, unknown>) => Promise<void>;
+
+      await handler({
+        message: {
+          chat: { id: 1234, type: "private" },
+          message_id: 100001,
+          date: 1736380800,
+          document: { file_id: "doc-100001", file_name: "large.bin" },
+          from: { id: 55, is_bot: false, first_name: "u" },
+        },
+        me: { username: "openclaw_bot" },
+        getFile: async () => {
+          throw new Error("Bad Request: file is too big");
+        },
+      });
+
+      await waitForMockCalls(sendMessageSpy, 1);
+      expect(sendMessageSpy).toHaveBeenCalledWith(
+        1234,
+        `⚠️ File too large. Maximum size is ${expectedLimitMb}MB.`,
+        expect.objectContaining({
+          reply_parameters: expect.objectContaining({ message_id: 100001 }),
+        }),
+      );
+      expect(replySpy).not.toHaveBeenCalled();
+      expect(saveRemoteMedia).not.toHaveBeenCalled();
+    },
+  );
+
+  it("durably retries a spooled-replay shutdown-abort document fetch without warning (#98076)", async () => {
+    loadConfig.mockReturnValue({
+      channels: { telegram: { dmPolicy: "open", allowFrom: ["*"] } },
+    });
+    sendMessageSpy.mockClear();
+    replySpy.mockClear();
+    saveRemoteMedia.mockRejectedValue(Object.assign(new Error("aborted"), { name: "AbortError" }));
+
+    createTelegramBot({ token: "tok" });
+    const handler = getOnHandler("message") as (ctx: Record<string, unknown>) => Promise<void>;
+    const update = { update_id: 98076 };
+    const ctx = {
+      update,
+      message: {
+        chat: { id: 1234, type: "private" },
+        message_id: 98076,
+        date: 1736380800,
+        document: { file_id: "doc-1", file_name: "report.pdf" },
+        from: { id: 55, is_bot: false, first_name: "u" },
+      },
+      me: { username: "openclaw_bot" },
+      getFile: async () => ({ file_path: "documents/doc-1" }),
+    };
+
+    const { result } = await runWithTelegramUpdateProcessingFrame(() =>
+      withTelegramSpooledReplayUpdate(update, () => handler(ctx)),
+    );
+
+    expect(result).toEqual({ kind: "failed-retryable", error: expect.any(MediaFetchError) });
+    expect(sendMessageSpy).not.toHaveBeenCalled();
+  });
+
+  it("acks and warns a permanent media failure even on spooled replay (#98076)", async () => {
+    loadConfig.mockReturnValue({
+      channels: { telegram: { dmPolicy: "open", allowFrom: ["*"] } },
+    });
+    sendMessageSpy.mockClear();
+    replySpy.mockClear();
+    saveRemoteMedia.mockRejectedValue(
+      new MediaFetchError("max_bytes", "Failed to fetch media: payload exceeds maxBytes 10"),
+    );
+
+    createTelegramBot({ token: "tok" });
+    const handler = getOnHandler("message") as (ctx: Record<string, unknown>) => Promise<void>;
+    const update = { update_id: 98077 };
+    const ctx = {
+      update,
+      message: {
+        chat: { id: 1234, type: "private" },
+        message_id: 98077,
+        date: 1736380800,
+        document: { file_id: "doc-2", file_name: "huge.pdf" },
+        from: { id: 55, is_bot: false, first_name: "u" },
+      },
+      me: { username: "openclaw_bot" },
+      getFile: async () => ({ file_path: "documents/doc-2" }),
+    };
+
+    const { result } = await runWithTelegramUpdateProcessingFrame(() =>
+      withTelegramSpooledReplayUpdate(update, () => handler(ctx)),
+    );
+
+    expect(result).toBeUndefined();
+    await waitForMockCalls(sendMessageSpy, 1);
+    expect(sendMessageSpy).toHaveBeenCalledWith(
+      1234,
+      "⚠️ Failed to download media. Please try again.",
+      expect.objectContaining({
+        reply_parameters: expect.objectContaining({ message_id: 98077 }),
+      }),
+    );
+  });
+
+  it("acks and warns a permanent fetch_failed (guard/SSRF) on spooled replay (#98076)", async () => {
+    loadConfig.mockReturnValue({
+      channels: { telegram: { dmPolicy: "open", allowFrom: ["*"] } },
+    });
+    sendMessageSpy.mockClear();
+    replySpy.mockClear();
+    saveRemoteMedia.mockRejectedValue(new Error("blocked by SSRF guard: private address"));
+
+    createTelegramBot({ token: "tok" });
+    const handler = getOnHandler("message") as (ctx: Record<string, unknown>) => Promise<void>;
+    const update = { update_id: 98078 };
+    const ctx = {
+      update,
+      message: {
+        chat: { id: 1234, type: "private" },
+        message_id: 98078,
+        date: 1736380800,
+        document: { file_id: "doc-3", file_name: "blocked.pdf" },
+        from: { id: 55, is_bot: false, first_name: "u" },
+      },
+      me: { username: "openclaw_bot" },
+      getFile: async () => ({ file_path: "documents/doc-3" }),
+    };
+
+    const { result } = await runWithTelegramUpdateProcessingFrame(() =>
+      withTelegramSpooledReplayUpdate(update, () => handler(ctx)),
+    );
+
+    expect(result).toBeUndefined();
+    await waitForMockCalls(sendMessageSpy, 1);
+    expect(sendMessageSpy).toHaveBeenCalledWith(
+      1234,
+      "⚠️ Failed to download media. Please try again.",
+      expect.objectContaining({
+        reply_parameters: expect.objectContaining({ message_id: 98078 }),
+      }),
+    );
   });
 
   it("skips unmentioned requireMention group media before downloading (#81181)", async () => {

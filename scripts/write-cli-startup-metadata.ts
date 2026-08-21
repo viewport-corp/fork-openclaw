@@ -27,9 +27,9 @@ const rootDir = path.resolve(scriptDir, "..");
 const distDir = path.join(rootDir, "dist");
 const outputPath = path.join(distDir, "cli-startup-metadata.json");
 const extensionsDir = path.join(rootDir, "extensions");
-const ROOT_HELP_RENDER_TIMEOUT_MS = 600_000;
-const BROWSER_HELP_RENDER_TIMEOUT_MS = 600_000;
-const COMMAND_HELP_RENDER_TIMEOUT_MS = 600_000;
+const ROOT_HELP_RENDER_TIMEOUT_MS = 120_000;
+const BROWSER_HELP_RENDER_TIMEOUT_MS = 120_000;
+const COMMAND_HELP_RENDER_TIMEOUT_MS = 120_000;
 const COMMAND_HELP_RENDER_MAX_OUTPUT_BYTES = 16 * 1024 * 1024;
 const COMMAND_HELP_RENDER_KILL_GRACE_MS = 5_000;
 const COMMAND_HELP_RENDER_CONCURRENCY = 2;
@@ -270,7 +270,7 @@ function resolveSubcommandHelpSourceSignature(sourceRootDir: string = rootDir): 
   return hash.digest("hex");
 }
 
-export function readBundledChannelCatalog(
+function readBundledChannelCatalog(
   extensionsDirOverride: string = extensionsDir,
 ): BundledChannelCatalog {
   const entries: ExtensionChannelEntry[] = [];
