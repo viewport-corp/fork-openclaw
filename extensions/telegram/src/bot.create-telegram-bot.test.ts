@@ -2736,6 +2736,7 @@ describe("createTelegramBot", () => {
     loadConfig.mockReturnValue({
       channels: {
         telegram: {
+          allowBots: true,
           dmPolicy: "open",
           allowFrom: ["*"],
           groupPolicy: "open",
