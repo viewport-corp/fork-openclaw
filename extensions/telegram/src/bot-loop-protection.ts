@@ -50,14 +50,14 @@ export function resolveTelegramBotLoopProtection(params: {
  * Resolve the `channels.telegram.allowBots` gate for an inbound message.
  * Returns true when the message should be dropped before dispatch.
  *
- * Default keeps bot-authored messages flowing (`allowBots !== false`):
- * Telegram's BotFather toggle is the platform-level opt-in, the regular
- * allowFrom/group gating still applies, and pre-10.0 fork behavior never
- * filtered bot senders.
+ * Bot-authored messages fail closed unless `allowBots` is explicitly true.
+ * Telegram's BotFather toggle controls delivery at the platform boundary;
+ * this setting is the independent OpenClaw opt-in before regular
+ * allowFrom/group gating and pair-loop protection apply.
  */
 export function shouldDropTelegramBotMessage(params: {
   msg: Pick<Message, "from">;
   telegramCfg?: Pick<TelegramAccountConfig, "allowBots">;
 }): boolean {
-  return params.msg.from?.is_bot === true && params.telegramCfg?.allowBots === false;
+  return params.msg.from?.is_bot === true && params.telegramCfg?.allowBots !== true;
 }

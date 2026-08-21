@@ -160,6 +160,8 @@ function createChannelPostContext(params: {
   mediaGroupId?: string;
   photoFileId?: string;
   getFileResult?: Record<string, unknown>;
+  from?: { id: number; is_bot: boolean; first_name: string };
+  meId?: number;
 }) {
   const photoFileId = params.photoFileId;
   return {
@@ -169,10 +171,11 @@ function createChannelPostContext(params: {
       date: params.date,
       ...(params.caption ? { caption: params.caption } : {}),
       ...(params.text ? { text: params.text } : {}),
+      ...(params.from ? { from: params.from } : {}),
       ...(params.mediaGroupId ? { media_group_id: params.mediaGroupId } : {}),
       ...(photoFileId ? { photo: [{ file_id: photoFileId }] } : {}),
     },
-    me: { username: "openclaw_bot" },
+    me: { ...(params.meId != null ? { id: params.meId } : {}), username: "openclaw_bot" },
     getFile: async () =>
       params.getFileResult ?? (photoFileId ? { file_path: `photos/${photoFileId}.jpg` } : {}),
   };
@@ -269,6 +272,53 @@ describe("createTelegramBot channel_post media", () => {
     saveMediaBuffer.mockReset();
     readRemoteMediaBuffer.mockReset();
     rootRead.mockReset();
+  });
+
+  it("drops bot-authored channel posts unless allowBots is explicitly true", async () => {
+    loadConfig.mockReturnValue({
+      channels: {
+        telegram: {
+          groupPolicy: "open",
+          groups: { "-100777111222": { enabled: true, requireMention: false } },
+        },
+      },
+    });
+    const handler = getChannelPostHandler();
+    const ctx = createChannelPostContext({
+      messageId: 901,
+      date: 1736380800,
+      text: "peer bot",
+      from: { id: 555, is_bot: true, first_name: "PeerBot" },
+      meId: 999,
+    });
+
+    await handler(ctx);
+
+    expect(replySpy).not.toHaveBeenCalled();
+  });
+
+  it("drops channel posts echoed from the current bot even when bots are allowed", async () => {
+    loadConfig.mockReturnValue({
+      channels: {
+        telegram: {
+          allowBots: true,
+          groupPolicy: "open",
+          groups: { "-100777111222": { enabled: true, requireMention: false } },
+        },
+      },
+    });
+    const handler = getChannelPostHandler();
+    const ctx = createChannelPostContext({
+      messageId: 902,
+      date: 1736380800,
+      text: "own echo",
+      from: { id: 999, is_bot: true, first_name: "OpenClaw" },
+      meId: 999,
+    });
+
+    await handler(ctx);
+
+    expect(replySpy).not.toHaveBeenCalled();
   });
 
   it("buffers channel_post media groups and processes them together", async () => {

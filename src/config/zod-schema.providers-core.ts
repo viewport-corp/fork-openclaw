@@ -281,7 +281,7 @@ export const TelegramAccountSchemaBase = z
       .boolean()
       .optional()
       .describe(
-        "Process inbound messages authored by other bots (Telegram Bot API 10.0 bot-to-bot mode). Default: true — Telegram only delivers bot messages after Bot-to-Bot Communication Mode is enabled in BotFather, and bot senders still pass the regular allowFrom/group gating. Set false to drop all bot-authored messages.",
+        "Process inbound messages authored by other bots (Telegram Bot API 10.0 bot-to-bot mode). Default: false — set true explicitly after enabling Bot-to-Bot Communication Mode in BotFather. Bot senders still pass the regular allowFrom/group gating and pair-loop protection.",
       ),
     botLoopProtection: BotLoopProtectionSchema.optional(),
     contextVisibility: ContextVisibilityModeSchema.optional(),

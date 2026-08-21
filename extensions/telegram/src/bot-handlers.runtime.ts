@@ -3766,11 +3766,11 @@ export const registerTelegramHandlers = ({
     if (normalizedMsg.from?.id != null && normalizedMsg.from.id === ctx.me?.id) {
       return;
     }
-    // Bot API 10.0 bot-to-bot mode: peer-bot messages are processed by default
-    // (gated by the usual allowFrom/group rules + the pair loop guard applied
-    // at dispatch); channels.telegram.allowBots=false opts out entirely.
+    // Bot API 10.0 bot-to-bot mode: peer-bot messages require explicit
+    // channels.telegram.allowBots=true, then still pass the usual
+    // allowFrom/group rules and pair loop guard applied at dispatch.
     if (shouldDropTelegramBotMessage({ msg: normalizedMsg, telegramCfg })) {
-      logVerbose(`telegram: drop bot message from ${normalizedMsg.from?.id} (allowBots=false)`);
+      logVerbose(`telegram: drop bot message from ${normalizedMsg.from?.id} (allowBots!=true)`);
       return;
     }
     await handleInboundMessageLike({
@@ -3808,6 +3808,16 @@ export const registerTelegramHandlers = ({
   bot.on("channel_post", async (ctx) => {
     const post = ctx.channelPost;
     if (!post) {
+      return;
+    }
+
+    if (post.from?.id != null && post.from.id === ctx.me?.id) {
+      return;
+    }
+    if (shouldDropTelegramBotMessage({ msg: post, telegramCfg })) {
+      logVerbose(
+        `telegram: drop bot-authored channel post from ${post.from?.id} (allowBots!=true)`,
+      );
       return;
     }
 
