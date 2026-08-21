@@ -1199,51 +1199,117 @@ function cloneSessionEntries(store: Record<string, SessionEntry>): Record<string
   );
 }
 
-function collectSessionEntryKeys(...entries: SessionEntry[]): Array<keyof SessionEntry> {
-  const keys = new Set<keyof SessionEntry>();
+type ReplySessionMergeRecord = Record<string, unknown>;
+
+function collectReplySessionMergeKeys(...entries: ReplySessionMergeRecord[]): string[] {
+  const keys = new Set<string>();
   for (const entry of entries) {
-    for (const key of Object.keys(entry) as Array<keyof SessionEntry>) {
+    for (const key of Object.keys(entry)) {
       keys.add(key);
     }
   }
   return [...keys];
 }
 
-function sessionEntryFieldEqual(
-  left: SessionEntry[keyof SessionEntry],
-  right: SessionEntry[keyof SessionEntry],
-): boolean {
-  return Object.is(left, right) || isDeepStrictEqual(left, right);
-}
-
-function sessionEntryFieldUnset(
-  hasValue: boolean,
-  value: SessionEntry[keyof SessionEntry],
-): boolean {
-  return !hasValue || value === undefined;
-}
-
-function sessionEntryFieldUnchanged(params: {
+function replySessionMergeFieldUnchanged(params: {
   leftHasValue: boolean;
-  leftValue: SessionEntry[keyof SessionEntry];
+  leftValue: unknown;
   rightHasValue: boolean;
-  rightValue: SessionEntry[keyof SessionEntry];
+  rightValue: unknown;
 }): boolean {
   const { leftHasValue, leftValue, rightHasValue, rightValue } = params;
-  if (
-    sessionEntryFieldUnset(leftHasValue, leftValue) &&
-    sessionEntryFieldUnset(rightHasValue, rightValue)
-  ) {
+  const leftUnset = !leftHasValue || leftValue === undefined;
+  const rightUnset = !rightHasValue || rightValue === undefined;
+  if (leftUnset && rightUnset) {
     return true;
   }
-  return leftHasValue === rightHasValue && sessionEntryFieldEqual(leftValue, rightValue);
+  return (
+    leftHasValue === rightHasValue &&
+    (Object.is(leftValue, rightValue) || isDeepStrictEqual(leftValue, rightValue))
+  );
+}
+
+function isReplySessionMergeRecord(value: unknown): value is ReplySessionMergeRecord {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return false;
+  }
+  const prototype = Object.getPrototypeOf(value);
+  return prototype === Object.prototype || prototype === null;
+}
+
+function setReplySessionMergeField(
+  target: ReplySessionMergeRecord,
+  key: string,
+  value: unknown,
+): void {
+  Object.defineProperty(target, key, {
+    configurable: true,
+    enumerable: true,
+    value,
+    writable: true,
+  });
+}
+
+function mergeConcurrentReplySessionRecord(params: {
+  current: ReplySessionMergeRecord;
+  prepared: ReplySessionMergeRecord;
+  snapshot: ReplySessionMergeRecord;
+}): ReplySessionMergeRecord {
+  const { current, prepared, snapshot } = params;
+  const merged: ReplySessionMergeRecord = { ...prepared };
+  for (const key of collectReplySessionMergeKeys(current, prepared, snapshot)) {
+    const currentHasValue = Object.hasOwn(current, key);
+    const snapshotHasValue = Object.hasOwn(snapshot, key);
+    const preparedHasValue = Object.hasOwn(prepared, key);
+    const currentValue = current[key];
+    const snapshotValue = snapshot[key];
+    const preparedValue = prepared[key];
+    const currentChanged = !replySessionMergeFieldUnchanged({
+      leftHasValue: currentHasValue,
+      leftValue: currentValue,
+      rightHasValue: snapshotHasValue,
+      rightValue: snapshotValue,
+    });
+    const preparedChanged = !replySessionMergeFieldUnchanged({
+      leftHasValue: preparedHasValue,
+      leftValue: preparedValue,
+      rightHasValue: snapshotHasValue,
+      rightValue: snapshotValue,
+    });
+    if (currentChanged && !preparedChanged) {
+      if (currentHasValue) {
+        setReplySessionMergeField(merged, key, currentValue);
+      } else {
+        delete merged[key];
+      }
+      continue;
+    }
+    if (
+      currentChanged &&
+      preparedChanged &&
+      currentHasValue &&
+      preparedHasValue &&
+      isReplySessionMergeRecord(currentValue) &&
+      isReplySessionMergeRecord(preparedValue) &&
+      (!snapshotHasValue || isReplySessionMergeRecord(snapshotValue))
+    ) {
+      setReplySessionMergeField(
+        merged,
+        key,
+        mergeConcurrentReplySessionRecord({
+          current: currentValue,
+          prepared: preparedValue,
+          snapshot: isReplySessionMergeRecord(snapshotValue) ? snapshotValue : {},
+        }),
+      );
+    }
+  }
+  return merged;
 }
 
 // Background activity can mutate non-identity fields after the initialization
-// snapshot. Carry forward only same-session changes; the prepared entry still
-// wins for any field it explicitly modified relative to the snapshot. This
-// preserves heartbeat/delivery/context metadata without resurrecting fields that
-// a reset intentionally cleared or carrying old-session metadata into /new.
+// snapshot. Recursively preserve disjoint same-session changes; prepared values
+// win same-leaf conflicts, while concurrent additions and deletions survive.
 function mergeConcurrentReplySessionMetadata(params: {
   currentEntry: SessionEntry;
   preparedEntry: SessionEntry;
@@ -1253,38 +1319,11 @@ function mergeConcurrentReplySessionMetadata(params: {
   if (!snapshotEntry || preparedEntry.sessionId !== snapshotEntry.sessionId) {
     return preparedEntry;
   }
-  const merged: SessionEntry = { ...preparedEntry };
-  const mergedFields = merged as Partial<
-    Record<keyof SessionEntry, SessionEntry[keyof SessionEntry]>
-  >;
-  for (const key of collectSessionEntryKeys(currentEntry, preparedEntry, snapshotEntry)) {
-    const currentHasValue = Object.hasOwn(currentEntry, key);
-    const snapshotHasValue = Object.hasOwn(snapshotEntry, key);
-    const preparedHasValue = Object.hasOwn(preparedEntry, key);
-    const currentValue = currentEntry[key];
-    const snapshotValue = snapshotEntry[key];
-    const preparedValue = preparedEntry[key];
-    const currentChanged = !sessionEntryFieldUnchanged({
-      leftHasValue: currentHasValue,
-      leftValue: currentValue,
-      rightHasValue: snapshotHasValue,
-      rightValue: snapshotValue,
-    });
-    const preparedKeptSnapshot = sessionEntryFieldUnchanged({
-      leftHasValue: preparedHasValue,
-      leftValue: preparedValue,
-      rightHasValue: snapshotHasValue,
-      rightValue: snapshotValue,
-    });
-    if (currentChanged && preparedKeptSnapshot) {
-      if (currentHasValue) {
-        mergedFields[key] = currentValue;
-      } else {
-        delete mergedFields[key];
-      }
-    }
-  }
-  return merged;
+  return mergeConcurrentReplySessionRecord({
+    current: currentEntry,
+    prepared: preparedEntry,
+    snapshot: snapshotEntry,
+  }) as SessionEntry;
 }
 
 function createReplySessionInitializationRevision(params: {

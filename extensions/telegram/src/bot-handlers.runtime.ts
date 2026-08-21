@@ -77,6 +77,7 @@ import {
   resolveInboundMediaFileId,
   TelegramBotApiFileTooLargeError,
 } from "./bot-handlers.media.js";
+import { shouldDropTelegramBotMessage } from "./bot-loop-protection.js";
 import type { TelegramMediaRef } from "./bot-message-context.js";
 import type {
   TelegramMessageContextOptions,
@@ -3763,6 +3764,13 @@ export const registerTelegramHandlers = ({
     // Bot-authored message updates can be echoed back by Telegram. Skip them here
     // and rely on the dedicated channel_post handler for channel-originated posts.
     if (normalizedMsg.from?.id != null && normalizedMsg.from.id === ctx.me?.id) {
+      return;
+    }
+    // Bot API 10.0 bot-to-bot mode: peer-bot messages are processed by default
+    // (gated by the usual allowFrom/group rules + the pair loop guard applied
+    // at dispatch); channels.telegram.allowBots=false opts out entirely.
+    if (shouldDropTelegramBotMessage({ msg: normalizedMsg, telegramCfg })) {
+      logVerbose(`telegram: drop bot message from ${normalizedMsg.from?.id} (allowBots=false)`);
       return;
     }
     await handleInboundMessageLike({

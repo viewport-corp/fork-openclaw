@@ -828,6 +828,75 @@ describe("session accessor file-backed seam", () => {
     });
   });
 
+  it("preserves disjoint nested metadata updates during reply session initialization", async () => {
+    const sessionKey = "agent:main:main";
+    await upsertSessionEntry(
+      { sessionKey, storePath },
+      {
+        pluginExtensions: {
+          "issue-572": {
+            nested: { base: true, conflict: "base", removeMe: true },
+          },
+        },
+        sessionId: "existing-session",
+        updatedAt: 10,
+      },
+    );
+
+    const snapshot = loadReplySessionInitializationSnapshot({ sessionKey, storePath });
+    await updateSessionEntry(
+      { sessionKey, storePath },
+      (current) => ({
+        pluginExtensions: {
+          ...current.pluginExtensions,
+          "issue-572": {
+            ...current.pluginExtensions?.["issue-572"],
+            nested: { base: true, conflict: "current", currentOnly: true },
+          },
+        },
+        updatedAt: 20,
+      }),
+      { skipMaintenance: true },
+    );
+
+    const committed = await commitReplySessionInitialization({
+      activeSessionKey: sessionKey,
+      agentId: "main",
+      expectedRevision: snapshot.revision,
+      sessionEntry: {
+        ...snapshot.currentEntry,
+        pluginExtensions: {
+          ...snapshot.currentEntry?.pluginExtensions,
+          "issue-572": {
+            ...snapshot.currentEntry?.pluginExtensions?.["issue-572"],
+            nested: {
+              base: true,
+              conflict: "prepared",
+              preparedOnly: true,
+              removeMe: true,
+            },
+          },
+        },
+        sessionId: "existing-session",
+        updatedAt: 30,
+      },
+      sessionKey,
+      snapshotEntry: snapshot.currentEntry,
+      storePath,
+    });
+
+    expect(committed.ok).toBe(true);
+    if (!committed.ok) {
+      throw new Error("expected reply session initialization to commit");
+    }
+    expect(committed.sessionEntry.pluginExtensions?.["issue-572"]?.nested).toEqual({
+      base: true,
+      conflict: "prepared",
+      currentOnly: true,
+      preparedOnly: true,
+    });
+  });
+
   it("preserves concurrent optional additions when prepared fields are undefined", async () => {
     const sessionKey = "agent:main:main";
     await upsertSessionEntry(
