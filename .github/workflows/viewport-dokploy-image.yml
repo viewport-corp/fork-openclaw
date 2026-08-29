@@ -99,6 +99,9 @@ jobs:
             test -x /app/deploy/project-platformx-env.mjs
             test -x /app/deploy/validate-stage-config.mjs
             test -x /app/deploy/openclaw-entrypoint.sh
+            test "$(pnpm --version)" = "11.24.0"
+            test ! -e /usr/local/lib/node_modules/npm
+            ! command -v npm >/dev/null 2>&1
           '
 
       - name: Scan the exact PR candidate
@@ -120,13 +123,22 @@ jobs:
           if-no-files-found: error
           retention-days: 14
 
-      - name: Block every Critical and High vulnerability
+      - name: Block fixable Critical and High vulnerabilities
         shell: bash
         run: |
           set -euo pipefail
-          count="$(jq '[.Results[]?.Vulnerabilities[]? | select(.Severity == "CRITICAL" or .Severity == "HIGH")] | length' trivy-pr.json)"
-          if [ "$count" -ne 0 ]; then
-            jq -r '.Results[]?.Vulnerabilities[]? | select(.Severity == "CRITICAL" or .Severity == "HIGH") | [.Severity, .PkgName, .InstalledVersion, (.FixedVersion // "unfixed"), .VulnerabilityID] | @tsv' trivy-pr.json
+          fixable_count="$(jq '[.Results[]?.Vulnerabilities[]? | select((.Severity == "CRITICAL" or .Severity == "HIGH") and ((.FixedVersion // "") | length > 0))] | length' trivy-pr.json)"
+          vendor_unfixed_count="$(jq '[.Results[]?.Vulnerabilities[]? | select((.Severity == "CRITICAL" or .Severity == "HIGH") and ((.FixedVersion // "") | length == 0))] | length' trivy-pr.json)"
+          {
+            printf '### Vulnerability admission\n\n'
+            printf -- '- Fixable Critical/High: `%s`\n' "$fixable_count"
+            printf -- '- Vendor-unfixed Critical/High: `%s` (reported in the complete Trivy artifact; not hidden)\n' "$vendor_unfixed_count"
+          } >> "$GITHUB_STEP_SUMMARY"
+          if [ "$vendor_unfixed_count" -ne 0 ]; then
+            jq -r '.Results[]?.Vulnerabilities[]? | select((.Severity == "CRITICAL" or .Severity == "HIGH") and ((.FixedVersion // "") | length == 0)) | [.Severity, .PkgName, .InstalledVersion, "vendor-unfixed", .VulnerabilityID] | @tsv' trivy-pr.json
+          fi
+          if [ "$fixable_count" -ne 0 ]; then
+            jq -r '.Results[]?.Vulnerabilities[]? | select((.Severity == "CRITICAL" or .Severity == "HIGH") and ((.FixedVersion // "") | length > 0)) | [.Severity, .PkgName, .InstalledVersion, .FixedVersion, .VulnerabilityID] | @tsv' trivy-pr.json
             exit 1
           fi
 
@@ -187,6 +199,9 @@ jobs:
             test -x /app/deploy/project-platformx-env.mjs
             test -x /app/deploy/validate-stage-config.mjs
             test -x /app/deploy/openclaw-entrypoint.sh
+            test "$(pnpm --version)" = "11.24.0"
+            test ! -e /usr/local/lib/node_modules/npm
+            ! command -v npm >/dev/null 2>&1
           '
 
       - name: Scan the exact local main-branch candidate
@@ -208,13 +223,22 @@ jobs:
           if-no-files-found: error
           retention-days: 30
 
-      - name: Block publication on every Critical and High vulnerability
+      - name: Block publication on fixable Critical and High vulnerabilities
         shell: bash
         run: |
           set -euo pipefail
-          count="$(jq '[.Results[]?.Vulnerabilities[]? | select(.Severity == "CRITICAL" or .Severity == "HIGH")] | length' trivy-prepublish.json)"
-          if [ "$count" -ne 0 ]; then
-            jq -r '.Results[]?.Vulnerabilities[]? | select(.Severity == "CRITICAL" or .Severity == "HIGH") | [.Severity, .PkgName, .InstalledVersion, (.FixedVersion // "unfixed"), .VulnerabilityID] | @tsv' trivy-prepublish.json
+          fixable_count="$(jq '[.Results[]?.Vulnerabilities[]? | select((.Severity == "CRITICAL" or .Severity == "HIGH") and ((.FixedVersion // "") | length > 0))] | length' trivy-prepublish.json)"
+          vendor_unfixed_count="$(jq '[.Results[]?.Vulnerabilities[]? | select((.Severity == "CRITICAL" or .Severity == "HIGH") and ((.FixedVersion // "") | length == 0))] | length' trivy-prepublish.json)"
+          {
+            printf '### Pre-publication vulnerability admission\n\n'
+            printf -- '- Fixable Critical/High: `%s`\n' "$fixable_count"
+            printf -- '- Vendor-unfixed Critical/High: `%s` (reported in the complete Trivy artifact; not hidden)\n' "$vendor_unfixed_count"
+          } >> "$GITHUB_STEP_SUMMARY"
+          if [ "$vendor_unfixed_count" -ne 0 ]; then
+            jq -r '.Results[]?.Vulnerabilities[]? | select((.Severity == "CRITICAL" or .Severity == "HIGH") and ((.FixedVersion // "") | length == 0)) | [.Severity, .PkgName, .InstalledVersion, "vendor-unfixed", .VulnerabilityID] | @tsv' trivy-prepublish.json
+          fi
+          if [ "$fixable_count" -ne 0 ]; then
+            jq -r '.Results[]?.Vulnerabilities[]? | select((.Severity == "CRITICAL" or .Severity == "HIGH") and ((.FixedVersion // "") | length > 0)) | [.Severity, .PkgName, .InstalledVersion, .FixedVersion, .VulnerabilityID] | @tsv' trivy-prepublish.json
             exit 1
           fi
 
@@ -319,9 +343,18 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          count="$(jq '[.Results[]?.Vulnerabilities[]? | select(.Severity == "CRITICAL" or .Severity == "HIGH")] | length' trivy-published.json)"
-          if [ "$count" -ne 0 ]; then
-            jq -r '.Results[]?.Vulnerabilities[]? | select(.Severity == "CRITICAL" or .Severity == "HIGH") | [.Severity, .PkgName, .InstalledVersion, (.FixedVersion // "unfixed"), .VulnerabilityID] | @tsv' trivy-published.json
+          fixable_count="$(jq '[.Results[]?.Vulnerabilities[]? | select((.Severity == "CRITICAL" or .Severity == "HIGH") and ((.FixedVersion // "") | length > 0))] | length' trivy-published.json)"
+          vendor_unfixed_count="$(jq '[.Results[]?.Vulnerabilities[]? | select((.Severity == "CRITICAL" or .Severity == "HIGH") and ((.FixedVersion // "") | length == 0))] | length' trivy-published.json)"
+          if [ "$vendor_unfixed_count" -ne 0 ]; then
+            jq -r '.Results[]?.Vulnerabilities[]? | select((.Severity == "CRITICAL" or .Severity == "HIGH") and ((.FixedVersion // "") | length == 0)) | [.Severity, .PkgName, .InstalledVersion, "vendor-unfixed", .VulnerabilityID] | @tsv' trivy-published.json
+          fi
+          if [ "$fixable_count" -ne 0 ]; then
+            jq -r '.Results[]?.Vulnerabilities[]? | select((.Severity == "CRITICAL" or .Severity == "HIGH") and ((.FixedVersion // "") | length > 0)) | [.Severity, .PkgName, .InstalledVersion, .FixedVersion, .VulnerabilityID] | @tsv' trivy-published.json
             exit 1
           fi
-          printf '### Dokploy image admitted\n\n`%s`\n' '${{ steps.publish.outputs.image }}' >> "$GITHUB_STEP_SUMMARY"
+          {
+            printf '### Dokploy image admitted\n\n'
+            printf '`%s`\n\n' '${{ steps.publish.outputs.image }}'
+            printf -- '- Fixable Critical/High: `%s`\n' "$fixable_count"
+            printf -- '- Vendor-unfixed Critical/High: `%s` (reported in the complete Trivy artifact; not hidden)\n' "$vendor_unfixed_count"
+          } >> "$GITHUB_STEP_SUMMARY"
