@@ -5,7 +5,7 @@
   "customGitBranch": "main",
   "composePath": "deploy/dokploy.production.yml",
   "composeType": "docker-compose",
-  "image": "ghcr.io/viewport-corp/fork-openclaw@sha256:3f5aa956e2f4021735065f7c9638420aed2dcbf05d8b79a3c2b936282fc59c0e",
+  "image": "ghcr.io/viewport-corp/fork-openclaw@sha256:2062f17703b2c109e9e39aed73e3c7355e17016e2acc0e8df457481eed333ef2",
   "network": {
     "external": true,
     "name": "fork-openclaw_default",
