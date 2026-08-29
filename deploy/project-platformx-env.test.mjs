@@ -28,6 +28,7 @@ try {
       "TELEGRAM_BOT_TOKEN=telegram-value",
       "DISCORD_BOT_TOKEN=discord-value",
       "GITHUB_TOKEN_VIEWPORT_CORP=github-value",
+      "OPENAI_API_KEY=openai-value",
       "SLACK_BOT_TOKEN=slack'quoted",
       "UNRELATED_COMPANY_SECRET=must-not-project",
       "",
@@ -44,7 +45,7 @@ try {
     "/bin/sh",
     [
       "-c",
-      '. "$1"; test "$OPENCLAW_GATEWAY_TOKEN" = gateway-value && test "$TELEGRAM_BOT_TOKEN" = telegram-value && test "$GITHUB_TOKEN" = github-value && test "$SLACK_BOT_TOKEN" = "slack' +
+      '. "$1"; test "$OPENCLAW_GATEWAY_TOKEN" = gateway-value && test "$TELEGRAM_BOT_TOKEN" = telegram-value && test "$GITHUB_TOKEN" = github-value && test "$OPENAI_API_KEY" = openai-value && test "$SLACK_BOT_TOKEN" = "slack' +
         "'" +
         'quoted" && test "$DISCORD_BOT_TOKEN" = discord-value && test -z "${UNRELATED_COMPANY_SECRET-}"',
       "sh",
@@ -60,7 +61,7 @@ try {
     "/bin/sh",
     [
       "-c",
-      '. "$1"; test "$OPENCLAW_GATEWAY_TOKEN" = stage-gateway-value && test -z "${GITHUB_TOKEN-}" && test -z "${GITHUB_TOKEN_VIEWPORT_CORP-}" && test -z "${GOOGLE_API_KEY-}" && test -z "${GROQ_API_KEY-}" && test -z "${NVIDIA_API_KEY-}" && test -z "${OPENROUTER_API_KEY-}" && test -z "${TELEGRAM_BOT_TOKEN-}" && test -z "${SLACK_BOT_TOKEN-}" && test -z "${DISCORD_BOT_TOKEN-}"',
+      '. "$1"; test "$OPENCLAW_GATEWAY_TOKEN" = stage-gateway-value && test -z "${GITHUB_TOKEN-}" && test -z "${GITHUB_TOKEN_VIEWPORT_CORP-}" && test -z "${GOOGLE_API_KEY-}" && test -z "${GROQ_API_KEY-}" && test -z "${NVIDIA_API_KEY-}" && test -z "${OPENAI_API_KEY-}" && test -z "${OPENROUTER_API_KEY-}" && test -z "${TELEGRAM_BOT_TOKEN-}" && test -z "${SLACK_BOT_TOKEN-}" && test -z "${DISCORD_BOT_TOKEN-}"',
       "sh",
       stage,
     ],

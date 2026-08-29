@@ -33,6 +33,7 @@ const gatewayKeys = [
   "GOOGLE_API_KEY",
   "GROQ_API_KEY",
   "NVIDIA_API_KEY",
+  "OPENAI_API_KEY",
   "OPENROUTER_API_KEY",
   "OPENCLAW_TZ",
 ];

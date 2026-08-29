@@ -7,14 +7,26 @@ services:
   runtime-config-check:
     image: *openclaw-image
     user: "1000:1000"
-    entrypoint: [node, /app/deploy/validate-stage-config.mjs]
-    command: [/home/node/.openclaw/openclaw.json, production]
+    entrypoint: [/usr/bin/tini, -s, --, /bin/sh, -ec]
+    command:
+      - |
+        . /run/openclaw-secrets/runtime.env
+        node /app/openclaw.mjs config validate
+        node /app/openclaw.mjs secrets audit --check
+        node /app/deploy/validate-stage-config.mjs /home/node/.openclaw/openclaw.json production
     network_mode: none
     restart: "no"
     read_only: true
     cap_drop: [ALL]
     security_opt: ["no-new-privileges:true"]
+    depends_on:
+      secret-init:
+        condition: service_healthy
     volumes:
+      - type: volume
+        source: projected-secrets
+        target: /run/openclaw-secrets
+        read_only: true
       - type: bind
         source: ${OPENCLAW_CONFIG_SOURCE:-/srv/viewport/runtime/openclaw-viewport/config}
         target: /home/node/.openclaw

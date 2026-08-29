@@ -10,6 +10,7 @@ on:
       - package.json
       - pnpm-lock.yaml
       - pnpm-workspace.yaml
+      - ui/package.json
       - openclaw.mjs
       - "src/**"
       - "extensions/**"
@@ -24,6 +25,7 @@ on:
       - package.json
       - pnpm-lock.yaml
       - pnpm-workspace.yaml
+      - ui/package.json
       - openclaw.mjs
       - "src/**"
       - "extensions/**"
@@ -43,10 +45,11 @@ jobs:
   test-projector:
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
           persist-credentials: false
-      - uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6.0.10
+      - uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6.0.10 peeled commit
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: "24"
@@ -58,34 +61,37 @@ jobs:
           node deploy/validate-stage-config.test.mjs
 
   build:
+    if: github.event_name == 'pull_request'
     needs: test-projector
     runs-on: ubuntu-24.04
     env:
       OPENCLAW_EXTENSIONS: diagnostics-otel,codex,discord,google,groq,nvidia,openai,openrouter,slack,telegram
     steps:
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          ref: ${{ github.event.pull_request.head.sha }}
           persist-credentials: false
-      - uses: docker/setup-buildx-action@d7f5e7f509e45cec5c76c4d5afdd7de93d0b3df5 # v4
+      - uses: docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e # v4.3.0
       - name: Build candidate for content verification
-        uses: docker/build-push-action@f9f3042f7e2789586610d6e8b85c8f03e5195baf # v7.2.0
+        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
         with:
           context: .
           platforms: linux/amd64
           load: true
-          tags: viewport-openclaw-candidate:${{ github.sha }}
+          tags: viewport-openclaw-candidate:${{ github.event.pull_request.head.sha }}
           build-args: OPENCLAW_EXTENSIONS=${{ env.OPENCLAW_EXTENSIONS }}
           cache-from: type=gha,scope=viewport-dokploy-amd64
           labels: |
             org.opencontainers.image.source=https://github.com/${{ github.repository }}
-            org.opencontainers.image.revision=${{ github.sha }}
-            org.opencontainers.image.version=sha-${{ github.sha }}
+            org.opencontainers.image.revision=${{ github.event.pull_request.head.sha }}
+            org.opencontainers.image.version=sha-${{ github.event.pull_request.head.sha }}
+            io.viewport.test-revision=${{ github.sha }}
 
       - name: Verify production plugins and deployment helpers
         shell: bash
         run: |
           set -euo pipefail
-          image="viewport-openclaw-candidate:${GITHUB_SHA}"
+          image="viewport-openclaw-candidate:${{ github.event.pull_request.head.sha }}"
           docker run --rm --entrypoint /bin/sh "$image" -ec '
             for plugin in codex discord google groq nvidia openai openrouter slack telegram; do
               test -d "/app/extensions/${plugin}"
@@ -95,64 +101,227 @@ jobs:
             test -x /app/deploy/openclaw-entrypoint.sh
           '
 
-      - name: Block reviewed Critical and High vulnerabilities
-        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+      - name: Scan the exact PR candidate
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0 peeled commit
         with:
-          image-ref: viewport-openclaw-candidate:${{ github.sha }}
-          format: table
-          exit-code: "1"
-          ignore-unfixed: true
+          image-ref: viewport-openclaw-candidate:${{ github.event.pull_request.head.sha }}
+          format: json
+          output: trivy-pr.json
+          exit-code: "0"
+          ignore-unfixed: false
           severity: CRITICAL,HIGH
           scanners: vuln
 
-      - name: Export reviewed PR candidate
-        if: github.event_name == 'pull_request'
-        shell: bash
-        run: docker save "viewport-openclaw-candidate:${GITHUB_SHA}" | gzip -1 > "viewport-openclaw-${GITHUB_SHA}.tar.gz"
-
-      - name: Upload reviewed PR candidate
-        if: github.event_name == 'pull_request'
+      - name: Upload the complete PR vulnerability report
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: viewport-openclaw-${{ github.sha }}
-          path: viewport-openclaw-${{ github.sha }}.tar.gz
+          name: viewport-openclaw-trivy-${{ github.event.pull_request.head.sha }}
+          path: trivy-pr.json
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Block every Critical and High vulnerability
+        shell: bash
+        run: |
+          set -euo pipefail
+          count="$(jq '[.Results[]?.Vulnerabilities[]? | select(.Severity == "CRITICAL" or .Severity == "HIGH")] | length' trivy-pr.json)"
+          if [ "$count" -ne 0 ]; then
+            jq -r '.Results[]?.Vulnerabilities[]? | select(.Severity == "CRITICAL" or .Severity == "HIGH") | [.Severity, .PkgName, .InstalledVersion, (.FixedVersion // "unfixed"), .VulnerabilityID] | @tsv' trivy-pr.json
+            exit 1
+          fi
+
+      - name: Export reviewed PR candidate
+        shell: bash
+        run: docker save "viewport-openclaw-candidate:${{ github.event.pull_request.head.sha }}" | gzip -1 > "viewport-openclaw-${{ github.event.pull_request.head.sha }}.tar.gz"
+
+      - name: Upload reviewed PR candidate
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: viewport-openclaw-${{ github.event.pull_request.head.sha }}
+          path: viewport-openclaw-${{ github.event.pull_request.head.sha }}.tar.gz
           if-no-files-found: error
           retention-days: 3
           compression-level: 0
 
   publish:
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-    needs: [test-projector, build]
+    needs: test-projector
     runs-on: ubuntu-24.04
     environment: viewport-dokploy-production
     permissions:
       contents: read
       packages: write
+      id-token: write
+      attestations: write
+      artifact-metadata: write
     env:
       OPENCLAW_EXTENSIONS: diagnostics-otel,codex,discord,google,groq,nvidia,openai,openrouter,slack,telegram
     steps:
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: docker/setup-buildx-action@d7f5e7f509e45cec5c76c4d5afdd7de93d0b3df5 # v4
-      - name: Log in to GHCR
-        uses: docker/login-action@b45d80f862d83dbcd57f89517bcf500b2ab88fb2 # v4.0.0
-        with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-      - name: Publish reviewed immutable image
-        uses: docker/build-push-action@f9f3042f7e2789586610d6e8b85c8f03e5195baf # v7.2.0
+      - uses: docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e # v4.3.0
+      - name: Build the main-branch candidate locally
+        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
         with:
           context: .
           platforms: linux/amd64
-          push: true
-          tags: ghcr.io/${{ github.repository }}:sha-${{ github.sha }}
+          load: true
+          tags: viewport-openclaw-publish:${{ github.sha }}
           build-args: OPENCLAW_EXTENSIONS=${{ env.OPENCLAW_EXTENSIONS }}
           cache-from: type=gha,scope=viewport-dokploy-amd64
           labels: |
             org.opencontainers.image.source=https://github.com/${{ github.repository }}
             org.opencontainers.image.revision=${{ github.sha }}
             org.opencontainers.image.version=sha-${{ github.sha }}
-          sbom: true
-          provenance: mode=max
+
+      - name: Verify production plugins and deployment helpers before publication
+        shell: bash
+        run: |
+          set -euo pipefail
+          image="viewport-openclaw-publish:${{ github.sha }}"
+          docker run --rm --entrypoint /bin/sh "$image" -ec '
+            for plugin in codex discord google groq nvidia openai openrouter slack telegram; do
+              test -d "/app/extensions/${plugin}"
+            done
+            test -x /app/deploy/project-platformx-env.mjs
+            test -x /app/deploy/validate-stage-config.mjs
+            test -x /app/deploy/openclaw-entrypoint.sh
+          '
+
+      - name: Scan the exact local main-branch candidate
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0 peeled commit
+        with:
+          image-ref: viewport-openclaw-publish:${{ github.sha }}
+          format: json
+          output: trivy-prepublish.json
+          exit-code: "0"
+          ignore-unfixed: false
+          severity: CRITICAL,HIGH
+          scanners: vuln
+
+      - name: Upload the pre-publication vulnerability report
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: viewport-openclaw-prepublish-${{ github.sha }}
+          path: trivy-prepublish.json
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Block publication on every Critical and High vulnerability
+        shell: bash
+        run: |
+          set -euo pipefail
+          count="$(jq '[.Results[]?.Vulnerabilities[]? | select(.Severity == "CRITICAL" or .Severity == "HIGH")] | length' trivy-prepublish.json)"
+          if [ "$count" -ne 0 ]; then
+            jq -r '.Results[]?.Vulnerabilities[]? | select(.Severity == "CRITICAL" or .Severity == "HIGH") | [.Severity, .PkgName, .InstalledVersion, (.FixedVersion // "unfixed"), .VulnerabilityID] | @tsv' trivy-prepublish.json
+            exit 1
+          fi
+
+      - name: Generate the exact-candidate CycloneDX SBOM
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0 peeled commit
+        with:
+          image-ref: viewport-openclaw-publish:${{ github.sha }}
+          format: cyclonedx
+          output: viewport-openclaw-${{ github.sha }}.cdx.json
+          scanners: vuln
+
+      - name: Upload the exact-candidate SBOM
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: viewport-openclaw-sbom-${{ github.sha }}
+          path: viewport-openclaw-${{ github.sha }}.cdx.json
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Log in to GHCR after admission
+        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Publish the already-scanned exact image
+        id: publish
+        shell: bash
+        run: |
+          set -euo pipefail
+          local_image="viewport-openclaw-publish:${GITHUB_SHA}"
+          image_name="ghcr.io/${GITHUB_REPOSITORY}"
+          image_tag="${image_name}:sha-${GITHUB_SHA}"
+          docker tag "$local_image" "$image_tag"
+          docker push "$image_tag"
+          published_ref="$(docker image inspect --format '{{index .RepoDigests 0}}' "$image_tag")"
+          case "$published_ref" in
+            "${image_name}"@sha256:*) ;;
+            *) echo "registry returned an invalid image reference: $published_ref" >&2; exit 1 ;;
+          esac
+          digest="${published_ref#*@}"
+          if [[ ! "$digest" =~ ^sha256:[0-9a-f]{64}$ ]]; then
+            echo "registry returned an invalid digest: $digest" >&2
+            exit 1
+          fi
+          echo "name=$image_name" >> "$GITHUB_OUTPUT"
+          echo "digest=$digest" >> "$GITHUB_OUTPUT"
+          echo "image=${image_name}@${digest}" >> "$GITHUB_OUTPUT"
+
+      - name: Attest exact-image build provenance
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
+        with:
+          subject-name: ${{ steps.publish.outputs.name }}
+          subject-digest: ${{ steps.publish.outputs.digest }}
+          push-to-registry: true
+
+      - name: Attest the exact-image SBOM
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
+        with:
+          subject-name: ${{ steps.publish.outputs.name }}
+          subject-digest: ${{ steps.publish.outputs.digest }}
+          sbom-path: viewport-openclaw-${{ github.sha }}.cdx.json
+          push-to-registry: true
+
+      - name: Pull and verify the exact published digest
+        shell: bash
+        env:
+          PUBLISHED_IMAGE: ${{ steps.publish.outputs.image }}
+        run: |
+          set -euo pipefail
+          docker pull "$PUBLISHED_IMAGE"
+          docker run --rm --entrypoint /bin/sh "$PUBLISHED_IMAGE" -ec '
+            for plugin in codex discord google groq nvidia openai openrouter slack telegram; do
+              test -d "/app/extensions/${plugin}"
+            done
+            test -x /app/deploy/project-platformx-env.mjs
+            test -x /app/deploy/validate-stage-config.mjs
+            test -x /app/deploy/openclaw-entrypoint.sh
+          '
+
+      - name: Scan the exact published digest
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0 peeled commit
+        with:
+          image-ref: ${{ steps.publish.outputs.image }}
+          format: json
+          output: trivy-published.json
+          exit-code: "0"
+          ignore-unfixed: false
+          severity: CRITICAL,HIGH
+          scanners: vuln
+
+      - name: Upload the published-digest vulnerability report
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: viewport-openclaw-published-${{ github.sha }}
+          path: trivy-published.json
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Admit the published digest for Dokploy
+        shell: bash
+        run: |
+          set -euo pipefail
+          count="$(jq '[.Results[]?.Vulnerabilities[]? | select(.Severity == "CRITICAL" or .Severity == "HIGH")] | length' trivy-published.json)"
+          if [ "$count" -ne 0 ]; then
+            jq -r '.Results[]?.Vulnerabilities[]? | select(.Severity == "CRITICAL" or .Severity == "HIGH") | [.Severity, .PkgName, .InstalledVersion, (.FixedVersion // "unfixed"), .VulnerabilityID] | @tsv' trivy-published.json
+            exit 1
+          fi
+          printf '### Dokploy image admitted\n\n`%s`\n' '${{ steps.publish.outputs.image }}' >> "$GITHUB_STEP_SUMMARY"
