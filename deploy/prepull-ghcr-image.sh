@@ -3,8 +3,10 @@ set -euo pipefail
 # Pre-pull the reviewed private GHCR digest into the docker-viewport daemon before Dokploy starts it.
 # Reads only GITHUB_TOKEN_VIEWPORT_CORP from /srv/viewport/secrets/platformx.env and uses temporary Docker auth under /run.
 
+SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"
+OPENCLAW_PREPULL_REVIEWED_IMAGE="$(node -e "const fs = require(\"node:fs\"); const manifest = JSON.parse(fs.readFileSync(process.argv[1], \"utf8\")); process.stdout.write(manifest.image);" "$SCRIPT_DIR/dokploy.desired-state.json")"
 OPENCLAW_PREPULL_SECRETS_FILE="${OPENCLAW_PREPULL_SECRETS_FILE:-/srv/viewport/secrets/platformx.env}"
-OPENCLAW_PREPULL_IMAGE="${OPENCLAW_PREPULL_IMAGE:-ghcr.io/viewport-corp/fork-openclaw@sha256:3f5aa956e2f4021735065f7c9638420aed2dcbf05d8b79a3c2b936282fc59c0e}"
+OPENCLAW_PREPULL_IMAGE="${OPENCLAW_PREPULL_IMAGE:-$OPENCLAW_PREPULL_REVIEWED_IMAGE}"
 OPENCLAW_PREPULL_DOCKER_HOST="${OPENCLAW_PREPULL_DOCKER_HOST:-unix:///var/run/docker-viewport.sock}"
 OPENCLAW_PREPULL_GHCR_USERNAME="${OPENCLAW_PREPULL_GHCR_USERNAME:-theplatformx}"
 OPENCLAW_PREPULL_DOCKER_CONFIG="$(mktemp -d /run/openclaw-ghcr-prepull.XXXXXX)"
@@ -27,8 +29,13 @@ if [[ ! -r "$OPENCLAW_PREPULL_SECRETS_FILE" ]]; then
   exit 66
 fi
 
-if [[ ! "$OPENCLAW_PREPULL_IMAGE" =~ ^ghcr\.io/viewport-corp/fork-openclaw@sha256:[a-f0-9]{64}$ ]]; then
-  echo "OPENCLAW_PREPULL_IMAGE must be the exact reviewed GHCR digest" >&2
+if [[ ! "$OPENCLAW_PREPULL_REVIEWED_IMAGE" =~ ^ghcr\.io/viewport-corp/fork-openclaw@sha256:[a-f0-9]{64}$ ]]; then
+  echo "Reviewed image in deploy/dokploy.desired-state.json is invalid" >&2
+  exit 78
+fi
+
+if [[ "$OPENCLAW_PREPULL_IMAGE" != "$OPENCLAW_PREPULL_REVIEWED_IMAGE" ]]; then
+  echo "OPENCLAW_PREPULL_IMAGE must equal the reviewed digest in deploy/dokploy.desired-state.json" >&2
   exit 64
 fi
 
