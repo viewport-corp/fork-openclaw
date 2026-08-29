@@ -110,8 +110,16 @@ const isSecretRefObject = (value) => {
   );
 };
 
-const looksLikeSecretRefObject = (value) =>
-  isRecord(value) && ("source" in value || "provider" in value || "id" in value);
+const looksLikeSecretRefObject = (value) => {
+  if (!isRecord(value)) {
+    return false;
+  }
+  const secretRefKeyCount = ["source", "provider", "id"].filter((key) => key in value).length;
+  if (secretRefKeyCount < 2) {
+    return false;
+  }
+  return "source" in value || (value.provider === "default" && "id" in value);
+};
 
 const parseEnvReference = (value) => {
   if (isSecretRefObject(value)) {
@@ -174,7 +182,7 @@ const validateSecretInput = (actualPath, value, surface) => {
     return;
   }
 
-  if (looksLikeSecretRefObject(value)) {
+  if (looksLikeSecretRefObject(value) || (surface && isRecord(value))) {
     failures.push(
       surface
         ? `${actualPath} must use a supported env SecretRef or exact env template`

@@ -39,6 +39,30 @@ try {
   assertAccepted(
     {
       channels: {
+        telegram: { enabled: false },
+        discord: { enabled: false },
+      },
+      gateway: { auth: { mode: "token", token: envRef("OPENCLAW_GATEWAY_TOKEN") } },
+      agents: {
+        list: [
+          {
+            id: "ops-agent",
+            model: { provider: "openai", id: "gpt-5.6-sol" },
+            agentRuntime: { id: "runtime-default", kind: "local" },
+          },
+        ],
+      },
+      models: {
+        list: [{ provider: "openai", id: "gpt-5.6-sol" }],
+        selected: { provider: "openai", id: "gpt-5.6-sol" },
+      },
+    },
+    "production",
+  );
+
+  assertAccepted(
+    {
+      channels: {
         telegram: {
           enabled: true,
           botToken: envRef("TELEGRAM_BOT_TOKEN"),
@@ -133,6 +157,32 @@ try {
       },
     },
     /gateway\.auth\.token must use a supported env SecretRef or exact env template/,
+    "production",
+  );
+
+  assertRejected(
+    {
+      gateway: { auth: { mode: "token", token: { id: "OPENCLAW_GATEWAY_TOKEN" } } },
+    },
+    /gateway\.auth\.token must use a supported env SecretRef or exact env template/,
+    "production",
+  );
+
+  assertRejected(
+    {
+      gateway: { auth: { mode: "token", token: envRef("OPENCLAW_GATEWAY_TOKEN") } },
+      experimental: { ref: { source: "env", id: "GITHUB_TOKEN" } },
+    },
+    /experimental\.ref is not in the supported credential matrix/,
+    "production",
+  );
+
+  assertRejected(
+    {
+      gateway: { auth: { mode: "token", token: envRef("OPENCLAW_GATEWAY_TOKEN") } },
+      experimental: { ref: { provider: "default", id: "GITHUB_TOKEN" } },
+    },
+    /experimental\.ref is not in the supported credential matrix/,
     "production",
   );
 
