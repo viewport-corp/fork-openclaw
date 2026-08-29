@@ -46,6 +46,11 @@ assert.equal(stageCompose.includes("test -r /run/openclaw-secrets/runtime.env"),
 assert.equal(compose.split(secretInitHealthcheck).length - 1, 1);
 assert.equal(stageCompose.split(secretInitHealthcheck).length - 1, 1);
 
+const configCheckTmpfs = "    tmpfs:\n" + "      - /tmp:size=64m,mode=1777,noexec,nosuid,nodev\n";
+
+assert.equal(compose.split(configCheckTmpfs).length - 1, 1);
+assert.equal(stageCompose.split(configCheckTmpfs).length - 1, 1);
+
 process.stdout.write(
   JSON.stringify({ dokployDesiredStateSafe: true, composeId: desired.composeId }) + "\n",
 );
