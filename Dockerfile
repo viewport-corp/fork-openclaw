@@ -6,15 +6,15 @@
 # The dependency manifest stages extract only package.json files, so the main
 # build layer is not invalidated by unrelated source changes.
 #
-# Build stages use full bookworm; the runtime image is always bookworm-slim.
+# Build stages use full trixie; the runtime image is always trixie-slim.
 ARG OPENCLAW_EXTENSIONS=""
 ARG OPENCLAW_BUNDLED_PLUGIN_DIR=extensions
 ARG OPENCLAW_DOCKER_BUILD_NODE_OPTIONS="--max-old-space-size=8192"
 ARG OPENCLAW_DOCKER_BUILD_TSDOWN_MAX_OLD_SPACE_MB=""
 ARG OPENCLAW_DOCKER_BUILD_SKIP_DTS=1
-ARG OPENCLAW_NODE_BOOKWORM_IMAGE="docker.io/library/node:24-bookworm@sha256:8530f76a96d88820d288761f022e318970dda93d01536919fbc16076b7983e63"
-ARG OPENCLAW_NODE_BOOKWORM_SLIM_IMAGE="docker.io/library/node:24-bookworm-slim@sha256:242549cd46785b480c832479a730f4f2a20865d61ea2e404fdb2a5c3d3b73ecf"
-ARG OPENCLAW_NODE_BOOKWORM_SLIM_DIGEST="sha256:242549cd46785b480c832479a730f4f2a20865d61ea2e404fdb2a5c3d3b73ecf"
+ARG OPENCLAW_NODE_TRIXIE_IMAGE="docker.io/library/node:24-trixie@sha256:f7d34e58713740f9eef9092c0bd6ff10369d132f7238399a4b270f16d47fa608"
+ARG OPENCLAW_NODE_TRIXIE_SLIM_IMAGE="docker.io/library/node:24-trixie-slim@sha256:50c3b2f6988dfc307b86e5301d69611af31f4789bdf232863b07d3b02fe55ae0"
+ARG OPENCLAW_NODE_TRIXIE_SLIM_DIGEST="sha256:50c3b2f6988dfc307b86e5301d69611af31f4789bdf232863b07d3b02fe55ae0"
 # Keep in sync with .github/actions/setup-node-env/action.yml bun-version.
 # To update: docker buildx imagetools inspect docker.io/oven/bun:<version> and use the manifest-list digest.
 ARG OPENCLAW_BUN_IMAGE="docker.io/oven/bun:1.3.13@sha256:87416c977a612a204eb54ab9f3927023c2a3c971f4f345a01da08ea6262ae30e"
@@ -22,11 +22,11 @@ ARG OPENCLAW_BUN_IMAGE="docker.io/oven/bun:1.3.13@sha256:87416c977a612a204eb54ab
 # Base images are pinned to SHA256 digests for reproducible builds.
 # Dependabot refreshes these blessed digests; release builds consume the
 # reviewed base snapshot instead of mutating distro state on every build.
-# To update, run: docker buildx imagetools inspect docker.io/library/node:24-bookworm and
-# docker.io/library/node:24-bookworm-slim (or podman) and replace the digests below with the
+# To update, run: docker buildx imagetools inspect docker.io/library/node:24-trixie and
+# docker.io/library/node:24-trixie-slim (or podman) and replace the digests below with the
 # current multi-arch manifest list entries.
 
-FROM ${OPENCLAW_NODE_BOOKWORM_IMAGE} AS workspace-deps
+FROM ${OPENCLAW_NODE_TRIXIE_IMAGE} AS workspace-deps
 ARG OPENCLAW_EXTENSIONS
 ARG OPENCLAW_BUNDLED_PLUGIN_DIR
 # Copy package.json files for workspace packages used by the install layer.
@@ -49,7 +49,7 @@ RUN --mount=type=bind,source=packages,target=/tmp/packages,readonly \
 
 # ── Stage 2: Build ──────────────────────────────────────────────
 FROM ${OPENCLAW_BUN_IMAGE} AS bun-binary
-FROM ${OPENCLAW_NODE_BOOKWORM_IMAGE} AS build
+FROM ${OPENCLAW_NODE_TRIXIE_IMAGE} AS build
 ARG OPENCLAW_BUNDLED_PLUGIN_DIR
 ARG OPENCLAW_EXTENSIONS
 ARG OPENCLAW_DOCKER_BUILD_NODE_OPTIONS
@@ -168,10 +168,10 @@ RUN --mount=type=cache,id=openclaw-pnpm-store,target=/root/.local/share/pnpm/sto
     node scripts/check-package-dist-imports.mjs /app
 
 # ── Runtime base image ──────────────────────────────────────────
-FROM ${OPENCLAW_NODE_BOOKWORM_SLIM_IMAGE} AS base-runtime
-ARG OPENCLAW_NODE_BOOKWORM_SLIM_DIGEST
-LABEL org.opencontainers.image.base.name="docker.io/library/node:24-bookworm-slim" \
-  org.opencontainers.image.base.digest="${OPENCLAW_NODE_BOOKWORM_SLIM_DIGEST}"
+FROM ${OPENCLAW_NODE_TRIXIE_SLIM_IMAGE} AS base-runtime
+ARG OPENCLAW_NODE_TRIXIE_SLIM_DIGEST
+LABEL org.opencontainers.image.base.name="docker.io/library/node:24-trixie-slim" \
+  org.opencontainers.image.base.digest="${OPENCLAW_NODE_TRIXIE_SLIM_DIGEST}"
 
 # ── Stage 3: Runtime ────────────────────────────────────────────
 FROM base-runtime
@@ -190,13 +190,13 @@ LABEL org.opencontainers.image.source="https://github.com/openclaw/openclaw" \
 
 WORKDIR /app
 
-# Install runtime system utilities missing from bookworm-slim.
-# `ca-certificates` ships in `bookworm` (full) but not in `bookworm-slim`,
+# Install runtime system utilities missing from trixie-slim.
+# `ca-certificates` ships in `trixie` (full) but not in `trixie-slim`,
 # so it must be installed explicitly here. Without it `/etc/ssl/certs/`
 # stays empty and every HTTPS outbound dies at TLS handshake with
 # `error setting certificate file`.
-RUN --mount=type=cache,id=openclaw-bookworm-apt-cache,target=/var/cache/apt,sharing=locked \
-    --mount=type=cache,id=openclaw-bookworm-apt-lists,target=/var/lib/apt,sharing=locked \
+RUN --mount=type=cache,id=openclaw-trixie-apt-cache,target=/var/cache/apt,sharing=locked \
+    --mount=type=cache,id=openclaw-trixie-apt-lists,target=/var/lib/apt,sharing=locked \
     apt-get update && \
     DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
       ca-certificates curl git hostname lsof openssl procps python3 tini && \
@@ -215,6 +215,7 @@ COPY --from=runtime-assets --chown=node:node /app/${OPENCLAW_BUNDLED_PLUGIN_DIR}
 COPY --from=runtime-assets --chown=node:node /app/skills ./skills
 COPY --from=runtime-assets --chown=node:node /app/docs ./docs
 COPY --from=runtime-assets --chown=node:node /app/qa ./qa
+COPY --from=runtime-assets --chown=node:node --chmod=0555 /app/deploy/project-platformx-env.mjs /app/deploy/validate-stage-config.mjs /app/deploy/openclaw-entrypoint.sh ./deploy/
 
 # Keep pnpm available in the runtime image for container-local workflows.
 # Use a shared Corepack home so the non-root `node` user does not need a
@@ -231,15 +232,17 @@ RUN install -d -m 0755 "$COREPACK_HOME" && \
       fi; \
       sleep $((attempt * 2)); \
     done && \
-    chmod -R a+rX "$COREPACK_HOME"
+    chmod -R a+rX "$COREPACK_HOME" && \
+    rm -rf /usr/local/lib/node_modules/npm && \
+    rm -f /usr/local/bin/npm /usr/local/bin/npx
 
 # Install additional system packages needed by your skills or extensions.
 # Example: docker build --build-arg OPENCLAW_IMAGE_APT_PACKAGES="python3 wget" .
 # Legacy alias: OPENCLAW_DOCKER_APT_PACKAGES is still accepted as a fallback.
 ARG OPENCLAW_IMAGE_APT_PACKAGES
 ARG OPENCLAW_DOCKER_APT_PACKAGES=""
-RUN --mount=type=cache,id=openclaw-bookworm-apt-cache,target=/var/cache/apt,sharing=locked \
-    --mount=type=cache,id=openclaw-bookworm-apt-lists,target=/var/lib/apt,sharing=locked \
+RUN --mount=type=cache,id=openclaw-trixie-apt-cache,target=/var/cache/apt,sharing=locked \
+    --mount=type=cache,id=openclaw-trixie-apt-lists,target=/var/lib/apt,sharing=locked \
     packages="${OPENCLAW_IMAGE_APT_PACKAGES-$OPENCLAW_DOCKER_APT_PACKAGES}"; \
     if [ -n "$packages" ]; then \
       apt-get update && \
@@ -249,8 +252,8 @@ RUN --mount=type=cache,id=openclaw-bookworm-apt-cache,target=/var/cache/apt,shar
 # Install additional Python packages needed by your plugins or skills.
 # Example: docker build --build-arg OPENCLAW_IMAGE_PIP_PACKAGES="requests humanize" .
 ARG OPENCLAW_IMAGE_PIP_PACKAGES=""
-RUN --mount=type=cache,id=openclaw-bookworm-apt-cache,target=/var/cache/apt,sharing=locked \
-    --mount=type=cache,id=openclaw-bookworm-apt-lists,target=/var/lib/apt,sharing=locked \
+RUN --mount=type=cache,id=openclaw-trixie-apt-cache,target=/var/cache/apt,sharing=locked \
+    --mount=type=cache,id=openclaw-trixie-apt-lists,target=/var/lib/apt,sharing=locked \
     if [ -n "$OPENCLAW_IMAGE_PIP_PACKAGES" ]; then \
       if ! python3 -m pip --version >/dev/null 2>&1; then \
         apt-get update && \
@@ -265,8 +268,8 @@ RUN --mount=type=cache,id=openclaw-bookworm-apt-cache,target=/var/cache/apt,shar
 # Must run after node_modules COPY so playwright-core is available.
 ARG OPENCLAW_INSTALL_BROWSER=""
 ENV PLAYWRIGHT_BROWSERS_PATH=/home/node/.cache/ms-playwright
-RUN --mount=type=cache,id=openclaw-bookworm-apt-cache,target=/var/cache/apt,sharing=locked \
-    --mount=type=cache,id=openclaw-bookworm-apt-lists,target=/var/lib/apt,sharing=locked \
+RUN --mount=type=cache,id=openclaw-trixie-apt-cache,target=/var/cache/apt,sharing=locked \
+    --mount=type=cache,id=openclaw-trixie-apt-lists,target=/var/lib/apt,sharing=locked \
     if [ -n "$OPENCLAW_INSTALL_BROWSER" ]; then \
       apt-get update && \
       DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends xvfb && \
@@ -281,8 +284,8 @@ RUN --mount=type=cache,id=openclaw-bookworm-apt-cache,target=/var/cache/apt,shar
 # Required for agents.defaults.sandbox to function in Docker deployments.
 ARG OPENCLAW_INSTALL_DOCKER_CLI=""
 ARG OPENCLAW_DOCKER_GPG_FINGERPRINT="9DC858229FC7DD38854AE2D88D81803C0EBFCD88"
-RUN --mount=type=cache,id=openclaw-bookworm-apt-cache,target=/var/cache/apt,sharing=locked \
-    --mount=type=cache,id=openclaw-bookworm-apt-lists,target=/var/lib/apt,sharing=locked \
+RUN --mount=type=cache,id=openclaw-trixie-apt-cache,target=/var/cache/apt,sharing=locked \
+    --mount=type=cache,id=openclaw-trixie-apt-lists,target=/var/lib/apt,sharing=locked \
     if [ -n "$OPENCLAW_INSTALL_DOCKER_CLI" ]; then \
       apt-get update && \
       DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
@@ -307,7 +310,7 @@ RUN --mount=type=cache,id=openclaw-bookworm-apt-cache,target=/var/cache/apt,shar
       gpg --dearmor -o /etc/apt/keyrings/docker.gpg /tmp/docker.gpg.asc && \
       rm -f /tmp/docker.gpg.asc && \
       chmod a+r /etc/apt/keyrings/docker.gpg && \
-      printf 'deb [arch=%s signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/debian bookworm stable\n' \
+      printf 'deb [arch=%s signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/debian trixie stable\n' \
         "$(dpkg --print-architecture)" > /etc/apt/sources.list.d/docker.list && \
       apt-get update && \
       DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
@@ -336,7 +339,7 @@ RUN install -d -m 0755 -o node -g node /home/node/.config && \
 ENV NODE_ENV=production
 
 # Security hardening: Run as non-root user
-# The node:24-bookworm image includes a 'node' user (uid 1000)
+# The node:24-trixie image includes a 'node' user (uid 1000)
 # This reduces the attack surface by preventing container escape via root privileges
 USER node
 

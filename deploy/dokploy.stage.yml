@@ -1,0 +1,143 @@
+# Isolated validation only. Every mutable stage identity/path must be explicit.
+name: ${OPENCLAW_STAGE_PROJECT:?set an isolated stage project name}
+
+x-openclaw-image: &openclaw-image ${OPENCLAW_IMAGE:?set the GitHub-published candidate image}
+
+services:
+  stage-config-check:
+    image: *openclaw-image
+    container_name: ${OPENCLAW_STAGE_CONFIG_CHECK_CONTAINER:?set an isolated config-check container name}
+    user: "1000:1000"
+    entrypoint: [/usr/bin/tini, -s, --, /bin/sh, -ec]
+    command:
+      - |
+        . /run/openclaw-secrets/runtime.env
+        node /app/openclaw.mjs config validate
+        node /app/openclaw.mjs secrets audit --check
+        node /app/deploy/validate-stage-config.mjs /home/node/.openclaw/openclaw.json stage
+    network_mode: none
+    restart: "no"
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    depends_on:
+      secret-init:
+        condition: service_healthy
+    volumes:
+      - type: volume
+        source: projected-secrets
+        target: /run/openclaw-secrets
+        read_only: true
+      - type: bind
+        source: ${OPENCLAW_STAGE_CONFIG_SOURCE:?set the copied stage config path}
+        target: /home/node/.openclaw
+        read_only: true
+        bind:
+          create_host_path: false
+
+  secret-init:
+    image: *openclaw-image
+    container_name: ${OPENCLAW_STAGE_SECRET_INIT_CONTAINER:?set an isolated secret-init container name}
+    user: "0:0"
+    entrypoint: [/usr/bin/tini, -s, --, /bin/sh, -ec]
+    command:
+      - node /app/deploy/project-platformx-env.mjs /run/platformx.env /run/openclaw-secrets/runtime.env stage && exec sleep infinity
+    network_mode: none
+    restart: unless-stopped
+    read_only: true
+    cap_drop: [ALL]
+    cap_add: [CHOWN]
+    security_opt: ["no-new-privileges:true"]
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - test -r /run/openclaw-secrets/runtime.env && test "$$(stat -c '%u:%g:%a' /run/openclaw-secrets/runtime.env)" = 1000:1000:400
+      timeout: 3s
+      interval: 5s
+      retries: 5
+      start_period: 5s
+    volumes:
+      - type: bind
+        source: /srv/viewport/secrets/platformx.env
+        target: /run/platformx.env
+        read_only: true
+        bind:
+          create_host_path: false
+      - type: volume
+        source: projected-secrets
+        target: /run/openclaw-secrets
+
+  openclaw-gateway:
+    image: *openclaw-image
+    container_name: ${OPENCLAW_STAGE_GATEWAY_CONTAINER:?set an isolated gateway container name}
+    entrypoint: [/usr/bin/tini, -s, --, /app/deploy/openclaw-entrypoint.sh]
+    command: [node, dist/index.js, gateway, --bind, lan, --port, "18789"]
+    depends_on:
+      stage-config-check:
+        condition: service_completed_successfully
+      secret-init:
+        condition: service_healthy
+    restart: unless-stopped
+    cap_drop: [NET_RAW, NET_ADMIN]
+    security_opt: ["no-new-privileges:true"]
+    networks:
+      default:
+        ipv4_address: ${OPENCLAW_STAGE_IPV4_ADDRESS:?set an isolated stage address}
+    healthcheck:
+      test:
+        [
+          CMD,
+          node,
+          -e,
+          "fetch('http://127.0.0.1:18789/healthz').then((r)=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))",
+        ]
+      timeout: 5s
+      interval: 10s
+      retries: 8
+      start_period: 20s
+    ports:
+      - "127.0.0.1:${OPENCLAW_STAGE_HOST_GATEWAY_PORT:?set an unused loopback port}:18789"
+      - "127.0.0.1:${OPENCLAW_STAGE_HOST_BRIDGE_PORT:?set an unused loopback port}:18790"
+      - "127.0.0.1:${OPENCLAW_STAGE_HOST_MSTEAMS_PORT:?set an unused loopback port}:3978"
+    volumes:
+      - type: volume
+        source: projected-secrets
+        target: /run/openclaw-secrets
+        read_only: true
+      - type: bind
+        source: ${OPENCLAW_STAGE_CONFIG_SOURCE:?set the copied stage config path}
+        target: /home/node/.openclaw
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ${OPENCLAW_STAGE_WORKSPACE_SOURCE:?set the copied stage workspace path}
+        target: /home/node/.openclaw/workspace
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ${OPENCLAW_STAGE_AUTH_SOURCE:?set the copied stage auth path}
+        target: /home/node/.config/openclaw
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ${OPENCLAW_STAGE_CODEX_AUTH_SOURCE:?set the copied stage Codex auth path}
+        target: /home/node/.codex
+        bind:
+          create_host_path: false
+
+volumes:
+  projected-secrets:
+    name: ${OPENCLAW_STAGE_SECRET_VOLUME:?set an isolated stage secret volume}
+    driver: local
+    driver_opts:
+      type: tmpfs
+      device: tmpfs
+      o: uid=0,gid=0,mode=0711,size=65536
+
+networks:
+  default:
+    name: ${OPENCLAW_STAGE_NETWORK:?set an isolated stage network name}
+    ipam:
+      config:
+        - subnet: ${OPENCLAW_STAGE_SUBNET:?set an unused stage subnet}
+          gateway: ${OPENCLAW_STAGE_GATEWAY:?set the stage gateway address}

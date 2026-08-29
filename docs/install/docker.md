@@ -411,7 +411,7 @@ If you installed from the older `scripts/shell-helpers/clawdock-helpers.sh` path
     Order your Dockerfile so dependency layers are cached, avoiding a `pnpm install` rerun unless lockfiles change:
 
     ```dockerfile
-    FROM node:24-bookworm
+    FROM node:24-trixie
     RUN curl -fsSL https://bun.sh/install | bash
     ENV PATH="/root/.bun/bin:${PATH}"
     RUN corepack enable
@@ -451,7 +451,7 @@ If you installed from the older `scripts/shell-helpers/clawdock-helpers.sh` path
   </Accordion>
 
   <Accordion title="Base image metadata">
-    The runtime image uses `node:24-bookworm-slim` and runs `tini` as PID 1 so zombie processes are reaped and signals handled correctly in long-running containers. It publishes OCI base-image annotations including `org.opencontainers.image.base.name` and `org.opencontainers.image.source`. Dependabot refreshes the pinned Node base digest; release builds don't run a separate distro upgrade layer. See [OCI image annotations](https://github.com/opencontainers/image-spec/blob/main/annotations.md).
+    The runtime image uses `node:24-trixie-slim` and runs `tini` as PID 1 so zombie processes are reaped and signals handled correctly in long-running containers. It publishes OCI base-image annotations including `org.opencontainers.image.base.name` and `org.opencontainers.image.source`. Dependabot refreshes the pinned Node base digest; release builds don't run a separate distro upgrade layer. See [OCI image annotations](https://github.com/opencontainers/image-spec/blob/main/annotations.md).
   </Accordion>
 </AccordionGroup>
 

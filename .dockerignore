@@ -50,6 +50,12 @@ dist-runtime
 **/dist-runtime
 openclaw-path-alias-*
 
+# Dokploy manifests are deployment authority, not runtime image content. Keeping
+# them out makes an immutable image digest stable when a manifest is updated to
+# pin that same digest after GitHub CI publishes it.
+deploy/*.yml
+deploy/*.yaml
+
 # build artifacts
 dist
 **/dist
