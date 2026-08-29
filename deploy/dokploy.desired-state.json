@@ -1,0 +1,17 @@
+{
+  "composeId": "pEotki2dpeakRxHTx3_Tt",
+  "sourceType": "git",
+  "customGitUrl": "https://github.com/viewport-corp/fork-openclaw.git",
+  "customGitBranch": "main",
+  "composePath": "deploy/dokploy.production.yml",
+  "composeType": "docker-compose",
+  "image": "ghcr.io/viewport-corp/fork-openclaw@sha256:3f5aa956e2f4021735065f7c9638420aed2dcbf05d8b79a3c2b936282fc59c0e",
+  "network": {
+    "external": true,
+    "name": "fork-openclaw_default",
+    "nameEnv": "OPENCLAW_NETWORK_NAME",
+    "gatewayService": "openclaw-gateway",
+    "gatewayIpv4Address": "172.31.16.2",
+    "gatewayIpv4AddressEnv": "OPENCLAW_IPV4_ADDRESS"
+  }
+}

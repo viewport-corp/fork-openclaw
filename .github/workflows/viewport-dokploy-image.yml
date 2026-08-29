@@ -59,6 +59,7 @@ jobs:
         run: |
           node deploy/project-platformx-env.test.mjs
           node deploy/validate-stage-config.test.mjs
+          node deploy/check-dokploy-desired-state.mjs
 
   build:
     if: github.event_name == 'pull_request'
