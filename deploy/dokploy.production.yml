@@ -1,11 +1,14 @@
 # GitHub authority for the Viewport OpenClaw production service in Dokploy.
+# Dokploy source contract: sourceType=git, customGitUrl=https://github.com/viewport-corp/fork-openclaw.git,
+# customGitBranch=main, composePath=deploy/dokploy.production.yml; no githubId/provider required.
 name: fork-openclaw
 
-x-openclaw-image: &openclaw-image ${OPENCLAW_IMAGE:?set OPENCLAW_IMAGE to the reviewed GitHub-published digest}
+x-openclaw-image: &openclaw-image ghcr.io/viewport-corp/fork-openclaw@sha256:3f5aa956e2f4021735065f7c9638420aed2dcbf05d8b79a3c2b936282fc59c0e
 
 services:
   runtime-config-check:
     image: *openclaw-image
+    pull_policy: if_not_present
     user: "1000:1000"
     entrypoint: [/usr/bin/tini, -s, --, /bin/sh, -ec]
     command:
@@ -36,6 +39,7 @@ services:
 
   secret-init:
     image: *openclaw-image
+    pull_policy: if_not_present
     user: "0:0"
     entrypoint:
       - /usr/bin/tini
@@ -76,6 +80,7 @@ services:
   openclaw-gateway:
     container_name: ${OPENCLAW_CONTAINER_NAME:-viewport-openclaw}
     image: *openclaw-image
+    pull_policy: if_not_present
     entrypoint:
       - /usr/bin/tini
       - -s
