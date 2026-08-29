@@ -16,7 +16,9 @@ on:
       - "extensions/**"
       - "packages/**"
       - "scripts/**"
-      - "deploy/**"
+      - deploy/project-platformx-env.mjs
+      - deploy/validate-stage-config.mjs
+      - deploy/openclaw-entrypoint.sh
       - .github/workflows/viewport-dokploy-image.yml
   pull_request:
     paths:
