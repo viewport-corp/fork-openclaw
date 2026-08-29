@@ -8,9 +8,11 @@ import process from "node:process";
 const rootDir = process.cwd();
 const manifestPath = path.join(rootDir, "deploy/dokploy.desired-state.json");
 const composePath = path.join(rootDir, "deploy/dokploy.production.yml");
+const stageComposePath = path.join(rootDir, "deploy/dokploy.stage.yml");
 
 const desired = JSON.parse(readFileSync(manifestPath, "utf8"));
 const compose = readFileSync(composePath, "utf8");
+const stageCompose = readFileSync(stageComposePath, "utf8");
 
 assert.equal(desired.composeId, "pEotki2dpeakRxHTx3_Tt");
 assert.equal(desired.sourceType, "git");
@@ -34,6 +36,15 @@ assert.match(compose, /ipv4_address: \$\{OPENCLAW_IPV4_ADDRESS:-172\.31\.16\.2\}
 
 const pullPolicyCount = (compose.match(/\n    pull_policy: if_not_present\n/gu) ?? []).length;
 assert.equal(pullPolicyCount, 3);
+
+const secretInitHealthcheck =
+  "test -f /run/openclaw-secrets/runtime.env && " +
+  "test \"$$(stat -c '%u:%g:%a' /run/openclaw-secrets/runtime.env)\" = 1000:1000:400";
+
+assert.equal(compose.includes("test -r /run/openclaw-secrets/runtime.env"), false);
+assert.equal(stageCompose.includes("test -r /run/openclaw-secrets/runtime.env"), false);
+assert.equal(compose.split(secretInitHealthcheck).length - 1, 1);
+assert.equal(stageCompose.split(secretInitHealthcheck).length - 1, 1);
 
 process.stdout.write(
   JSON.stringify({ dokployDesiredStateSafe: true, composeId: desired.composeId }) + "\n",

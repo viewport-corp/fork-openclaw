@@ -51,7 +51,7 @@ services:
     healthcheck:
       test:
         - CMD-SHELL
-        - test -r /run/openclaw-secrets/runtime.env && test "$$(stat -c '%u:%g:%a' /run/openclaw-secrets/runtime.env)" = 1000:1000:400
+        - test -f /run/openclaw-secrets/runtime.env && test "$$(stat -c '%u:%g:%a' /run/openclaw-secrets/runtime.env)" = 1000:1000:400
       timeout: 3s
       interval: 5s
       retries: 5
