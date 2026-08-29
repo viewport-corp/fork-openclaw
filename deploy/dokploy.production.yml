@@ -1,0 +1,166 @@
+# GitHub authority for the Viewport OpenClaw production service in Dokploy.
+name: fork-openclaw
+
+x-openclaw-image: &openclaw-image ${OPENCLAW_IMAGE:?set OPENCLAW_IMAGE to the reviewed GitHub-published digest}
+
+services:
+  runtime-config-check:
+    image: *openclaw-image
+    user: "1000:1000"
+    entrypoint: [node, /app/deploy/validate-stage-config.mjs]
+    command: [/home/node/.openclaw/openclaw.json, production]
+    network_mode: none
+    restart: "no"
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    volumes:
+      - type: bind
+        source: ${OPENCLAW_CONFIG_SOURCE:-/srv/viewport/runtime/openclaw-viewport/config}
+        target: /home/node/.openclaw
+        read_only: true
+        bind:
+          create_host_path: false
+
+  secret-init:
+    image: *openclaw-image
+    user: "0:0"
+    entrypoint:
+      - /usr/bin/tini
+      - -s
+      - --
+      - /bin/sh
+      - -ec
+    command:
+      - node /app/deploy/project-platformx-env.mjs /run/platformx.env /run/openclaw-secrets/runtime.env production && exec sleep infinity
+    network_mode: none
+    restart: unless-stopped
+    read_only: true
+    cap_drop:
+      - ALL
+    cap_add:
+      - CHOWN
+    security_opt:
+      - no-new-privileges:true
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - test -r /run/openclaw-secrets/runtime.env && test "$$(stat -c '%u:%g:%a' /run/openclaw-secrets/runtime.env)" = 1000:1000:400
+      timeout: 3s
+      interval: 5s
+      retries: 5
+      start_period: 5s
+    volumes:
+      - type: bind
+        source: /srv/viewport/secrets/platformx.env
+        target: /run/platformx.env
+        read_only: true
+        bind:
+          create_host_path: false
+      - type: volume
+        source: projected-secrets
+        target: /run/openclaw-secrets
+
+  openclaw-gateway:
+    container_name: ${OPENCLAW_CONTAINER_NAME:-viewport-openclaw}
+    image: *openclaw-image
+    entrypoint:
+      - /usr/bin/tini
+      - -s
+      - --
+      - /app/deploy/openclaw-entrypoint.sh
+    command:
+      - node
+      - dist/index.js
+      - gateway
+      - --bind
+      - lan
+      - --port
+      - "18789"
+    depends_on:
+      runtime-config-check:
+        condition: service_completed_successfully
+      secret-init:
+        condition: service_healthy
+    restart: unless-stopped
+    cap_drop:
+      - NET_RAW
+      - NET_ADMIN
+    security_opt:
+      - no-new-privileges:true
+    networks:
+      default:
+        # The current public edge reaches this cross-daemon address directly.
+        # Pinning it prevents a healthy recreation from becoming a 502.
+        ipv4_address: ${OPENCLAW_IPV4_ADDRESS:-172.31.16.2}
+    healthcheck:
+      test:
+        - CMD
+        - node
+        - -e
+        - fetch('http://127.0.0.1:18789/healthz').then((r)=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))
+      timeout: 5s
+      interval: 30s
+      retries: 5
+      start_period: 20s
+    ports:
+      - mode: ingress
+        host_ip: 127.0.0.1
+        target: 18789
+        published: "${OPENCLAW_HOST_GATEWAY_PORT:-47295}"
+        protocol: tcp
+      - mode: ingress
+        host_ip: 127.0.0.1
+        target: 18790
+        published: "${OPENCLAW_HOST_BRIDGE_PORT:-47296}"
+        protocol: tcp
+      - mode: ingress
+        host_ip: 127.0.0.1
+        target: 3978
+        published: "${OPENCLAW_HOST_MSTEAMS_PORT:-3978}"
+        protocol: tcp
+    volumes:
+      - type: volume
+        source: projected-secrets
+        target: /run/openclaw-secrets
+        read_only: true
+      - type: bind
+        source: ${OPENCLAW_CONFIG_SOURCE:-/srv/viewport/runtime/openclaw-viewport/config}
+        target: /home/node/.openclaw
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ${OPENCLAW_WORKSPACE_SOURCE:-/srv/viewport/runtime/openclaw-viewport/workspace}
+        target: /home/node/.openclaw/workspace
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ${OPENCLAW_AUTH_SOURCE:-/srv/viewport/runtime/openclaw-viewport/auth-secrets}
+        target: /home/node/.config/openclaw
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ${OPENCLAW_CODEX_AUTH_SOURCE:-/srv/viewport/runtime/openclaw-viewport/codex-auth}
+        target: /home/node/.codex
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ${OPENCLAW_SSH_SOURCE:-/srv/viewport/runtime/openclaw-viewport/ssh}
+        target: /home/node/.ssh
+        read_only: true
+        bind:
+          create_host_path: false
+
+volumes:
+  projected-secrets:
+    name: ${OPENCLAW_SECRET_VOLUME_NAME:-viewport-openclaw-runtime-secrets}
+    driver: local
+    driver_opts:
+      type: tmpfs
+      device: tmpfs
+      o: uid=0,gid=0,mode=0711,size=65536
+
+networks:
+  default:
+    name: ${OPENCLAW_NETWORK_NAME:-fork-openclaw_default}
+    external: true

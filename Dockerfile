@@ -215,6 +215,7 @@ COPY --from=runtime-assets --chown=node:node /app/${OPENCLAW_BUNDLED_PLUGIN_DIR}
 COPY --from=runtime-assets --chown=node:node /app/skills ./skills
 COPY --from=runtime-assets --chown=node:node /app/docs ./docs
 COPY --from=runtime-assets --chown=node:node /app/qa ./qa
+COPY --from=runtime-assets --chown=node:node --chmod=0555 /app/deploy/project-platformx-env.mjs /app/deploy/validate-stage-config.mjs /app/deploy/openclaw-entrypoint.sh ./deploy/
 
 # Keep pnpm available in the runtime image for container-local workflows.
 # Use a shared Corepack home so the non-root `node` user does not need a

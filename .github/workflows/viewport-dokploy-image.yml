@@ -1,0 +1,158 @@
+name: Viewport Dokploy Image
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - Dockerfile
+      - .dockerignore
+      - package.json
+      - pnpm-lock.yaml
+      - pnpm-workspace.yaml
+      - openclaw.mjs
+      - "src/**"
+      - "extensions/**"
+      - "packages/**"
+      - "scripts/**"
+      - "deploy/**"
+      - .github/workflows/viewport-dokploy-image.yml
+  pull_request:
+    paths:
+      - Dockerfile
+      - .dockerignore
+      - package.json
+      - pnpm-lock.yaml
+      - pnpm-workspace.yaml
+      - openclaw.mjs
+      - "src/**"
+      - "extensions/**"
+      - "packages/**"
+      - "scripts/**"
+      - "deploy/**"
+      - .github/workflows/viewport-dokploy-image.yml
+
+permissions:
+  contents: read
+
+concurrency:
+  group: viewport-dokploy-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test-projector:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+        with:
+          persist-credentials: false
+      - uses: pnpm/action-setup@78be461e8ce0d424863c5ea7d84839c2b121377a # v4.1.0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: "24"
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: Verify allowlist, alias, quoting, and stage isolation
+        run: |
+          node deploy/project-platformx-env.test.mjs
+          node deploy/validate-stage-config.test.mjs
+
+  build:
+    needs: test-projector
+    runs-on: ubuntu-24.04
+    env:
+      OPENCLAW_EXTENSIONS: diagnostics-otel,codex,discord,google,groq,nvidia,openai,openrouter,slack,telegram
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+        with:
+          persist-credentials: false
+      - uses: docker/setup-buildx-action@d7f5e7f509e45cec5c76c4d5afdd7de93d0b3df5 # v4
+      - name: Build candidate for content verification
+        uses: docker/build-push-action@f9f3042f7e2789586610d6e8b85c8f03e5195baf # v7.2.0
+        with:
+          context: .
+          platforms: linux/amd64
+          load: true
+          tags: viewport-openclaw-candidate:${{ github.sha }}
+          build-args: OPENCLAW_EXTENSIONS=${{ env.OPENCLAW_EXTENSIONS }}
+          cache-from: type=gha,scope=viewport-dokploy-amd64
+          labels: |
+            org.opencontainers.image.source=https://github.com/${{ github.repository }}
+            org.opencontainers.image.revision=${{ github.sha }}
+            org.opencontainers.image.version=sha-${{ github.sha }}
+
+      - name: Verify production plugins and deployment helpers
+        shell: bash
+        run: |
+          set -euo pipefail
+          image="viewport-openclaw-candidate:${GITHUB_SHA}"
+          docker run --rm --entrypoint /bin/sh "$image" -ec '
+            for plugin in codex discord google groq nvidia openai openrouter slack telegram; do
+              test -d "/app/extensions/${plugin}"
+            done
+            test -x /app/deploy/project-platformx-env.mjs
+            test -x /app/deploy/validate-stage-config.mjs
+            test -x /app/deploy/openclaw-entrypoint.sh
+          '
+
+      - name: Block reviewed Critical and High vulnerabilities
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          image-ref: viewport-openclaw-candidate:${{ github.sha }}
+          format: table
+          exit-code: "1"
+          ignore-unfixed: true
+          severity: CRITICAL,HIGH
+          scanners: vuln
+
+      - name: Export reviewed PR candidate
+        if: github.event_name == 'pull_request'
+        shell: bash
+        run: docker save "viewport-openclaw-candidate:${GITHUB_SHA}" | gzip -1 > "viewport-openclaw-${GITHUB_SHA}.tar.gz"
+
+      - name: Upload reviewed PR candidate
+        if: github.event_name == 'pull_request'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: viewport-openclaw-${{ github.sha }}
+          path: viewport-openclaw-${{ github.sha }}.tar.gz
+          if-no-files-found: error
+          retention-days: 3
+          compression-level: 0
+
+  publish:
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: [test-projector, build]
+    runs-on: ubuntu-24.04
+    environment: viewport-dokploy-production
+    permissions:
+      contents: read
+      packages: write
+    env:
+      OPENCLAW_EXTENSIONS: diagnostics-otel,codex,discord,google,groq,nvidia,openai,openrouter,slack,telegram
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+        with:
+          persist-credentials: false
+      - uses: docker/setup-buildx-action@d7f5e7f509e45cec5c76c4d5afdd7de93d0b3df5 # v4
+      - name: Log in to GHCR
+        uses: docker/login-action@650006c6eb7dba73a995cc03b0b2d7f5ca915bee # v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Publish reviewed immutable image
+        uses: docker/build-push-action@f9f3042f7e2789586610d6e8b85c8f03e5195baf # v7.2.0
+        with:
+          context: .
+          platforms: linux/amd64
+          push: true
+          tags: ghcr.io/${{ github.repository }}:sha-${{ github.sha }}
+          build-args: OPENCLAW_EXTENSIONS=${{ env.OPENCLAW_EXTENSIONS }}
+          cache-from: type=gha,scope=viewport-dokploy-amd64
+          labels: |
+            org.opencontainers.image.source=https://github.com/${{ github.repository }}
+            org.opencontainers.image.revision=${{ github.sha }}
+            org.opencontainers.image.version=sha-${{ github.sha }}
+          sbom: true
+          provenance: mode=max
