@@ -1,0 +1,71 @@
+name: Upstream Sync
+
+on:
+  schedule:
+    - cron: "0 3 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: write
+  issues: write
+
+jobs:
+  upstream-sync:
+    runs-on: ubuntu-latest
+    env:
+      UPSTREAM_REPO: openclaw/openclaw
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Merge latest upstream release
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git remote add upstream "https://github.com/${UPSTREAM_REPO}.git" 2>/dev/null || true
+          git fetch origin main
+          git fetch upstream --tags
+
+          tag="$(gh api "repos/${UPSTREAM_REPO}/releases/latest" --jq .tag_name)"
+          release_url="$(gh api "repos/${UPSTREAM_REPO}/releases/latest" --jq .html_url)"
+          git rev-parse --verify --quiet "$tag^{commit}" >/dev/null
+
+          if git merge-base --is-ancestor "$tag^{commit}" origin/main; then
+            exit 0
+          fi
+
+          branch="sync/upstream-${tag}"
+          if git ls-remote --exit-code --heads origin "$branch" >/dev/null 2>&1; then
+            git fetch origin "$branch"
+            git switch -C "$branch" "origin/$branch"
+          else
+            git switch -c "$branch" origin/main
+          fi
+
+          if ! git merge --no-edit "$tag"; then
+            conflicts="$(git diff --name-only --diff-filter=U || true)"
+            git merge --abort || true
+            title="sync: conflict merging upstream ${tag}"
+            body="$(printf 'Upstream release: %s\nRelease URL: %s\n\nConflicts:\n%s\n' \
+              "$tag" "$release_url" "${conflicts:-unknown}")"
+            gh issue create --title "$title" --body "$body"
+            exit 1
+          fi
+
+          git push --set-upstream origin "$branch"
+          diffstat="$(git diff --stat origin/main...HEAD || true)"
+          body="$(printf 'Upstream tag: %s\nRelease URL: %s\n\nDiffstat:\n%s\n' \
+            "$tag" "$release_url" "${diffstat:-No diffstat available.}")"
+          pr_number="$(gh pr list --head "$branch" --state open \
+            --json number --jq '.[0].number // empty')"
+          if [ -n "$pr_number" ]; then
+            gh pr edit "$pr_number" --title "sync: upstream ${tag}" --body "$body"
+          else
+            gh pr create --base main --head "$branch" \
+              --title "sync: upstream ${tag}" --body "$body"
+          fi
