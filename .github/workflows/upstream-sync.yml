@@ -53,7 +53,10 @@ jobs:
             title="sync: conflict merging upstream ${tag}"
             body="$(printf 'Upstream release: %s\nRelease URL: %s\n\nConflicts:\n%s\n' \
               "$tag" "$release_url" "${conflicts:-unknown}")"
-            gh issue create --title "$title" --body "$body"
+            if ! gh issue list --repo "$GITHUB_REPOSITORY" --state open \
+              --search "\"${title}\" in:title" --json number --jq '.[0].number // empty' | grep -q .; then
+              gh issue create --repo "$GITHUB_REPOSITORY" --title "$title" --body "$body"
+            fi
             exit 1
           fi
 
