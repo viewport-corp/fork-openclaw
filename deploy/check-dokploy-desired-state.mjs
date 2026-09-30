@@ -29,6 +29,16 @@ for (const step of desired.upgradePath) {
   assert.match(step.image, officialImagePattern);
   assert.match(step.revision, /^[a-f0-9]{40}$/u);
 }
+// Channel/provider plugins go in before the bridge Doctor and before the 2026.9.5 gateway
+// serves: its startup migrations would otherwise run without them.
+const bridge = desired.upgradePath[0];
+const bridgeDoctor = bridge.preStart.indexOf("openclaw doctor --fix");
+for (const plugin of ["discord", "slack", "groq-provider"]) {
+  const install = `openclaw plugins install clawhub:@openclaw/${plugin}`;
+  const at = bridge.preStart.indexOf(install);
+  assert.ok(at >= 0 && at < bridgeDoctor, `${install} must run in preStart before doctor --fix`);
+}
+assert.equal(bridge.after.join("\n").includes("plugins install"), false);
 assert.equal(
   desired.rollback.image,
   "viewport-corp/openclaw@sha256:46502ae3633270c5e27b1f8c7095761e223490aaa6cdf4fdc0a4337201f27fa0",

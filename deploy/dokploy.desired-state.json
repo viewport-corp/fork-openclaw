@@ -14,13 +14,23 @@
       "revision": "ec9c1a13db8938e5a3eaa51fca2e981cde2395a9",
       "before": [
         "openclaw backup create --verify (old image, gateway running)",
-        "openclaw config unset channels.telegram.allowBots (old image; strict schema on the official image)"
+        "openclaw config unset channels.telegram.allowBots (old image; strict schema on the official image)",
+        "stop the old gateway container; keep and rename it, never rm (Doctor needs sole ownership of the state)"
       ],
-      "after": [
+      "preStart": [
         "openclaw plugins install clawhub:@openclaw/discord",
         "openclaw plugins install clawhub:@openclaw/slack",
         "openclaw plugins install clawhub:@openclaw/groq-provider",
         "openclaw doctor --fix",
+        "openclaw config validate"
+      ],
+      "preStartRunner": "docker compose -f deploy/dokploy.production.yml run -T --rm --no-deps --entrypoint node openclaw-gateway dist/index.js <command>: this step's image, mounts and env, no gateway running (docs/install/docker.md@v2026.9.5:185-196)",
+      "preStartReason": "the 2026.9.5 gateway runs startup migrations and plugin convergence before readiness (docker.md@v2026.9.5:230-233), and plugins must be installed before their migrations run (updating.md@v2026.9.7:58); with no gateway running, plugins install saves the install for the next start (docs/cli/plugins/install.md@v2026.9.5:15-17)",
+      "preStartStop": "if a plugins install refuses because the config is invalid, stop and roll back; do not run doctor --fix first, because Doctor removes channel config left dangling by a missing plugin (docs/cli/doctor/checks.md@v2026.9.5:64)",
+      "start": "Dokploy deploy of this compose; the gateway starts serving only now",
+      "after": [
+        "GET http://127.0.0.1:47295/healthz",
+        "openclaw plugins list (discord, slack, groq-provider present)",
         "openclaw config validate"
       ]
     },
