@@ -1,117 +1,178 @@
 # GitHub authority for the Viewport OpenClaw production service in Dokploy.
 # Dokploy source contract: sourceType=git, customGitUrl=https://github.com/viewport-corp/fork-openclaw.git,
 # customGitBranch=main, composePath=deploy/dokploy.production.yml; no githubId/provider required.
+# Shape mirrors the live container compose-bypass-neural-driver-ty4443-openclaw-gateway-1 (2026-09-30),
+# on the OFFICIAL upstream image. Upgrade order and rollback: deploy/dokploy.desired-state.json.
 name: fork-openclaw
 
-x-openclaw-image: &openclaw-image ghcr.io/viewport-corp/fork-openclaw@sha256:2062f17703b2c109e9e39aed73e3c7355e17016e2acc0e8df457481eed333ef2
+x-openclaw-image: &openclaw-image ghcr.io/openclaw/openclaw:2026.9.5@sha256:ea298b62be8955d3ef750e2004a610dd90c3a30e5f9886e5d654d78a0c573218
 
 services:
-  runtime-config-check:
-    image: *openclaw-image
-    pull_policy: if_not_present
-    user: "1000:1000"
-    entrypoint: [/usr/bin/tini, -s, --, /bin/sh, -ec]
-    command:
-      - |
-        . /run/openclaw-secrets/runtime.env
-        node /app/openclaw.mjs config validate
-        node /app/openclaw.mjs secrets audit --check
-        node /app/deploy/validate-stage-config.mjs /home/node/.openclaw/openclaw.json production
-    network_mode: none
-    restart: "no"
-    read_only: true
-    tmpfs:
-      - /tmp:size=64m,mode=1777,noexec,nosuid,nodev
-    cap_drop: [ALL]
-    security_opt: ["no-new-privileges:true"]
-    depends_on:
-      secret-init:
-        condition: service_healthy
-    volumes:
-      - type: volume
-        source: projected-secrets
-        target: /run/openclaw-secrets
-        read_only: true
-      - type: bind
-        source: ${OPENCLAW_CONFIG_SOURCE:-/srv/viewport/runtime/openclaw-viewport/config}
-        target: /home/node/.openclaw
-        read_only: true
-        bind:
-          create_host_path: false
-
-  secret-init:
-    image: *openclaw-image
-    pull_policy: if_not_present
-    user: "0:0"
-    entrypoint:
-      - /usr/bin/tini
-      - -s
-      - --
-      - /bin/sh
-      - -ec
-    command:
-      - node /app/deploy/project-platformx-env.mjs /run/platformx.env /run/openclaw-secrets/runtime.env production && exec sleep infinity
-    network_mode: none
-    restart: unless-stopped
-    read_only: true
-    cap_drop:
-      - ALL
-    cap_add:
-      - CHOWN
-    security_opt:
-      - no-new-privileges:true
-    healthcheck:
-      test:
-        - CMD-SHELL
-        - test -f /run/openclaw-secrets/runtime.env && test "$$(stat -c '%u:%g:%a' /run/openclaw-secrets/runtime.env)" = 1000:1000:400
-      timeout: 3s
-      interval: 5s
-      retries: 5
-      start_period: 5s
-    volumes:
-      - type: bind
-        source: /srv/viewport/secrets/platformx.env
-        target: /run/platformx.env
-        read_only: true
-        bind:
-          create_host_path: false
-      - type: volume
-        source: projected-secrets
-        target: /run/openclaw-secrets
-
   openclaw-gateway:
     container_name: ${OPENCLAW_CONTAINER_NAME:-viewport-openclaw}
     image: *openclaw-image
     pull_policy: if_not_present
-    entrypoint:
-      - /usr/bin/tini
-      - -s
-      - --
-      - /app/deploy/openclaw-entrypoint.sh
-    command:
-      - node
-      - dist/index.js
-      - gateway
-      - --bind
-      - lan
-      - --port
-      - "18789"
-    depends_on:
-      runtime-config-check:
-        condition: service_completed_successfully
-      secret-init:
-        condition: service_healthy
+    # No entrypoint override: the official image entrypoint (tini) must run as shipped.
+    command: [node, dist/index.js, gateway, --bind, lan, --port, "18789"]
     restart: unless-stopped
-    cap_drop:
-      - NET_RAW
-      - NET_ADMIN
-    security_opt:
-      - no-new-privileges:true
+    # Live operator-access feature (viewport-ops#572, 2026-08-30): the agent drives the
+    # docker-viewport daemon through the socket, which is group 988 on the host.
+    group_add: ["988"]
+    cap_drop: [NET_RAW, NET_ADMIN]
+    security_opt: ["no-new-privileges:true"]
+    # Env NAMES only: values come from the Dokploy env (deploy/.env, used for interpolation)
+    # and never live in Git. Only the names listed here reach the gateway.
+    # Required names use ${NAME:?}, so compose fails when one is unset or empty.
+    # Optional names are bare keys (`NAME:`): a name missing from the Dokploy env is left
+    # out of the container instead of arriving as "" (compose-spec 05-services.md, environment).
+    # Container-side paths are pinned as in the official compose, so host paths
+    # in the Dokploy env cannot leak into the runtime.
+    environment:
+      HOME: /home/node
+      OPENCLAW_HOME: /home/node
+      OPENCLAW_STATE_DIR: /home/node/.openclaw
+      OPENCLAW_CONFIG_PATH: /home/node/.openclaw/openclaw.json
+      OPENCLAW_CONFIG_DIR: /home/node/.openclaw
+      OPENCLAW_WORKSPACE_DIR: /home/node/.openclaw/workspace
+      OPENCLAW_GATEWAY_PORT: "18789"
+      TZ: ${OPENCLAW_TZ:-UTC}
+      # Phase 1 desired config reads ${LITELLM_API_KEY}; left out until added to the Dokploy env.
+      LITELLM_API_KEY:
+      # Same names as the live container (Dokploy env, 2026-09-30).
+      APP_NAME:
+      AUTH_SECRET:
+      BROWSERBASE_ADVANCED_STEALTH:
+      BROWSERBASE_PROXIES:
+      BROWSER_INACTIVITY_TIMEOUT:
+      BROWSER_SESSION_TIMEOUT:
+      CF_ACCOUNT_ID:
+      CF_API_KEY:
+      CF_DEST_ACCOUNT_ID:
+      CF_DEST_API_KEY:
+      CF_DEST_EMAIL:
+      CF_EMAIL:
+      CF_SOURCE_ACCOUNT_ID:
+      CF_SOURCE_API_KEY:
+      CF_SOURCE_EMAIL:
+      CF_TOKEN_SAFE:
+      CF_TOKEN_SAFE_ID:
+      CF_TOKEN_ZONE_MANAGE:
+      CF_TOKEN_ZONE_MANAGE_ID:
+      CF_ZONE_ID:
+      CLAUDE_CODE_OAUTH_TOKEN:
+      CLIPROXY_API_KEY:
+      COGNEE_DB_PATH:
+      COMPOSE_PROJECT_NAME:
+      COMPOSIO_API_KEY:
+      COMPOSIO_CF_AUTH_CONFIG_ID:
+      COMPOSIO_MCP_SERVER_ID:
+      COMPOSIO_MCP_URL:
+      COOLIFY_API_TOKEN:
+      DOCKER_CONFIG:
+      DOCKER_GID:
+      FINNHUB_API_KEY:
+      FIRECRAWL_API_KEY:
+      GATEWAY_ALLOW_ALL_USERS:
+      GITHUB_TOKEN:
+      GITHUB_TOKEN_VIEWPORT_CORP:
+      GOOGLE_API_KEY:
+      GROQ_API_KEY:
+      HERMES_OPERATOR_NAME:
+      HERMES_OWNER:
+      HERMES_TIMEZONE:
+      IMAGE_TOOLS_DEBUG:
+      IMPORTED_SLACK_BOT_TOKEN:
+      LANGCHAIN_API_KEY:
+      LANGCHAIN_PROJECT:
+      LANGCHAIN_TRACING_V2:
+      LANGFUSE_HOST:
+      LINEAR_API_KEY:
+      LINEAR_TEAM_ID:
+      LITELLM_MASTER_KEY:
+      LOCAL_AUTH_TOKEN:
+      MOA_TOOLS_DEBUG:
+      MODERNLAO_ADMIN_LOGIN:
+      MODERNLAO_BOT_LOGIN:
+      MODERNLAO_GARY_BOOKMARK:
+      MODERNLAO_GARY_LOGIN:
+      MODERNLAO_ODOO_DB:
+      MODERNLAO_ODOO_URL:
+      MODERNLAO_PASSWORD:
+      MODERNLAO_TELEGRAM_BOT_TOKEN:
+      N8N_BASIC_AUTH_ACTIVE:
+      N8N_BASIC_AUTH_PASSWORD:
+      N8N_BASIC_AUTH_USER:
+      N8N_ENCRYPTION_KEY:
+      N8N_HOST:
+      N8N_PORT:
+      N8N_PROTOCOL:
+      N8N_USER_MANAGEMENT_DISABLED:
+      NAMECHEAP_API_KEY:
+      NAMECHEAP_API_USER:
+      NAMECHEAP_CLIENT_IP:
+      NAMECOM_API_TOKEN_PROD:
+      NAMECOM_API_TOKEN_TEST:
+      NAMECOM_API_URL:
+      NAMECOM_API_USER_PROD:
+      NAMECOM_API_USER_TEST:
+      NAMECOM_TOKEN:
+      NAMECOM_USER:
+      NOTION_API_KEY:
+      NOTION_PAGE_ID:
+      NOTION_TOKEN:
+      NVIDIA_API_KEY:
+      NVIDIA_DEEPSEEK_KEY:
+      NVIDIA_DEEPSEEK_TERMINUS_KEY:
+      NVIDIA_GRANITE_KEY:
+      NVIDIA_KIMI_K2_KEY:
+      NVIDIA_KIMI_KEY:
+      NVIDIA_LLAMA_405B_KEY:
+      NVIDIA_LLAMA_KEY:
+      NVIDIA_MISTRAL_KEY:
+      NVIDIA_NEMOTRON_NANO_KEY:
+      NVIDIA_QWEN_KEY:
+      ODOO_DB:
+      ODOO_MLG_BOT_PASSWORD:
+      ODOO_PASSWORD:
+      ODOO_URL:
+      ODOO_USER:
+      OPENCLAW_AUTH_SECRET_DIR:
+      OPENCLAW_BRIDGE_PORT:
+      OPENCLAW_DOCKER_SOCK:
+      OPENCLAW_GATEWAY_BIND:
+      OPENCLAW_GATEWAY_PASSWORD:
+      OPENCLAW_GATEWAY_TOKEN: ${OPENCLAW_GATEWAY_TOKEN:?set OPENCLAW_GATEWAY_TOKEN in the Dokploy env}
+      OPENCLAW_HOOKS_TOKEN:
+      OPENCLAW_IMAGE:
+      OPENCLAW_SKIP_ONBOARDING:
+      OPENCLAW_SSH_DIR:
+      OPENCLAW_TZ:
+      OPENROUTER_API_KEY:
+      PLATFORMX_DOCKER_LEGACY:
+      PLATFORMX_DOCKER_VIEWPORT:
+      PLATFORMX_ROOT_SSH_TARGET:
+      PLATFORMX_VPS_HOST:
+      PLATFORMX_VPS_TAILSCALE_IP:
+      POLLINATIONS_API_KEY:
+      PORKBUN_API_KEY:
+      PORKBUN_SECRET_KEY:
+      SLACK_BOT_TOKEN:
+      SLACK_CHANNEL_ID:
+      SLACK_DISABLED_REASON:
+      TAVILY_API_KEY:
+      TELEGRAM_ALLOWED_USERS:
+      TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:?set TELEGRAM_BOT_TOKEN in the Dokploy env}
+      TELEGRAM_HOME_CHANNEL:
+      TELEGRAM_HOME_CHANNEL_NAME:
+      TERMINAL_LIFETIME_SECONDS:
+      TERMINAL_MODAL_IMAGE:
+      TERMINAL_TIMEOUT:
+      VISION_TOOLS_DEBUG:
+      WEBHOOK_URL:
+      WEB_TOOLS_DEBUG:
     networks:
       default:
-        # The current public edge reaches this cross-daemon address directly.
-        # Pinning it prevents a healthy recreation from becoming a 502.
-        ipv4_address: ${OPENCLAW_IPV4_ADDRESS:-172.31.16.2}
+        aliases: [openclaw-gateway]
     healthcheck:
       test:
         - CMD
@@ -122,62 +183,21 @@ services:
       interval: 30s
       retries: 5
       start_period: 20s
+    # The edge routes to 127.0.0.1:47295 on the host, not to a fixed container IP.
     ports:
-      - mode: ingress
-        host_ip: 127.0.0.1
-        target: 18789
-        published: "${OPENCLAW_HOST_GATEWAY_PORT:-47295}"
-        protocol: tcp
-      - mode: ingress
-        host_ip: 127.0.0.1
-        target: 18790
-        published: "${OPENCLAW_HOST_BRIDGE_PORT:-47296}"
-        protocol: tcp
-      - mode: ingress
-        host_ip: 127.0.0.1
-        target: 3978
-        published: "${OPENCLAW_HOST_MSTEAMS_PORT:-3978}"
-        protocol: tcp
+      - "127.0.0.1:47295:18789"
+      - "127.0.0.1:47296:18790"
+      - "127.0.0.1:3978:3978"
     volumes:
-      - type: volume
-        source: projected-secrets
-        target: /run/openclaw-secrets
-        read_only: true
-      - type: bind
-        source: ${OPENCLAW_CONFIG_SOURCE:-/srv/viewport/runtime/openclaw-viewport/config}
-        target: /home/node/.openclaw
-        bind:
-          create_host_path: false
-      - type: bind
-        source: ${OPENCLAW_WORKSPACE_SOURCE:-/srv/viewport/runtime/openclaw-viewport/workspace}
-        target: /home/node/.openclaw/workspace
-        bind:
-          create_host_path: false
-      - type: bind
-        source: ${OPENCLAW_AUTH_SOURCE:-/srv/viewport/runtime/openclaw-viewport/auth-secrets}
-        target: /home/node/.config/openclaw
-        bind:
-          create_host_path: false
-      - type: bind
-        source: ${OPENCLAW_CODEX_AUTH_SOURCE:-/srv/viewport/runtime/openclaw-viewport/codex-auth}
-        target: /home/node/.codex
-        bind:
-          create_host_path: false
-      - type: bind
-        source: ${OPENCLAW_SSH_SOURCE:-/srv/viewport/runtime/openclaw-viewport/ssh}
-        target: /home/node/.ssh
-        read_only: true
-        bind:
-          create_host_path: false
-
-volumes:
-  projected-secrets:
-    name: ${OPENCLAW_SECRET_VOLUME_NAME:-viewport-openclaw-runtime-secrets}
-    driver: local
-    driver_opts:
-      type: tmpfs
-      device: tmpfs
-      o: uid=0,gid=0,mode=0711,size=65536
+      - /srv/viewport/runtime/openclaw-viewport/config:/home/node/.openclaw
+      - /srv/viewport/runtime/openclaw-viewport/workspace:/home/node/.openclaw/workspace
+      - /srv/viewport/runtime/openclaw-viewport/auth-secrets:/home/node/.config/openclaw
+      - /srv/viewport/runtime/openclaw-viewport/codex-auth:/home/node/.codex
+      - /srv/viewport/runtime/openclaw-viewport/ssh:/home/node/.ssh:ro
+      - /var/run/docker-viewport.sock:/var/run/docker.sock
+      # Same as live; narrowing these is a separate hardening issue.
+      - /srv/viewport:/srv/viewport
+      - /opt/platformx:/opt/platformx
 
 networks:
   default:

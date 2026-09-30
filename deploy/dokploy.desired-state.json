@@ -5,13 +5,83 @@
   "customGitBranch": "main",
   "composePath": "deploy/dokploy.production.yml",
   "composeType": "docker-compose",
-  "image": "ghcr.io/viewport-corp/fork-openclaw@sha256:2062f17703b2c109e9e39aed73e3c7355e17016e2acc0e8df457481eed333ef2",
+  "image": "ghcr.io/openclaw/openclaw:2026.9.5@sha256:ea298b62be8955d3ef750e2004a610dd90c3a30e5f9886e5d654d78a0c573218",
+  "imageRevision": "ec9c1a13db8938e5a3eaa51fca2e981cde2395a9",
+  "upgradePath": [
+    {
+      "step": 1,
+      "image": "ghcr.io/openclaw/openclaw:2026.9.5@sha256:ea298b62be8955d3ef750e2004a610dd90c3a30e5f9886e5d654d78a0c573218",
+      "revision": "ec9c1a13db8938e5a3eaa51fca2e981cde2395a9",
+      "bridgeCondition": "installs older than June 2026 upgrade to 2026.9.5 first, run its Doctor, then latest; latest Doctor stops on retired config keys and points back to this bridge (docs/install/updating.md@v2026.9.7:20-32)",
+      "bridgeApplies": "yes: the runtime is the fork 2026.7.1 (config meta.lastTouchedVersion 2026.7.1), but the mounted state is older than June 2026 (config dir files from 2026-03-22 and 2026-03-29, identity/device.json 2026-05-11; read-only stat 2026-09-30). The 2026.7.1 runtime already imported tasks/runs.sqlite, flows/registry.sqlite and plugin-state/state.sqlite (only *.migrated copies remain), so the bridge is kept for retired config keys and any remaining pre-June state. Doctor imports channel state only for enabled channels and accounts (updating.md@v2026.9.7:53-58)",
+      "before": [
+        "openclaw backup create --verify (old image, gateway running)",
+        "openclaw config unset channels.telegram.allowBots (old image; strict schema on the official image)",
+        "stop the old gateway container; keep and rename it, never rm (Doctor needs sole ownership of the state)"
+      ],
+      "preStart": [
+        "openclaw plugins install clawhub:@openclaw/discord",
+        "openclaw plugins install clawhub:@openclaw/slack",
+        "openclaw plugins install clawhub:@openclaw/groq-provider",
+        "openclaw doctor --fix",
+        "openclaw config validate"
+      ],
+      "preStartRunner": "docker compose -f deploy/dokploy.production.yml run -T --rm --no-deps --entrypoint node openclaw-gateway dist/index.js <command>: this step's image, mounts and env, no gateway running (docs/install/docker.md@v2026.9.5:185-196)",
+      "preStartReason": "the 2026.9.5 gateway runs startup migrations and plugin convergence before readiness (docker.md@v2026.9.5:230-233), and plugins must be installed before their migrations run (updating.md@v2026.9.7:58); with no gateway running, plugins install saves the install for the next start (docs/cli/plugins/install.md@v2026.9.5:15-17)",
+      "preStartStop": "if a plugins install refuses because the config is invalid, stop and roll back; do not run doctor --fix first, because Doctor removes channel config left dangling by a missing plugin (docs/cli/doctor/checks.md@v2026.9.5:64)",
+      "start": "Dokploy deploy of this compose; the gateway starts serving only now",
+      "after": [
+        "GET http://127.0.0.1:47295/healthz",
+        "openclaw plugins list (discord, slack, groq-provider present)",
+        "openclaw config validate"
+      ]
+    },
+    {
+      "step": 2,
+      "image": "ghcr.io/openclaw/openclaw:2026.9.7@sha256:0da12cd49983fcb5e4915fd3135ce7a33d82f93649b1df6964946d2c1d1dbcfc",
+      "revision": "c074824a27c96d3983043f9eeb33823cd1772d8c",
+      "release": "v2026.9.7 = GitHub Latest (draft=false, prerelease=false, published 2026-09-30T04:44:14Z); registry read 2026-09-30: tags 2026.9.7 and latest both resolve to this index digest, amd64 revision label = peeled tag commit",
+      "gate": "only after step 1 Doctor passes and 2026.9.5 serves healthy; re-read GitHub Latest and the ghcr.io index digest before the pin PR and again before deploy, and pin a newer stable with its own registry-read digest if one exists",
+      "startNote": "this image's entrypoint (docker-entrypoint.mjs) runs doctor --fix --non-interactive before the compose gateway command (docs/install/docker.md@v2026.9.7:228-234)",
+      "before": ["openclaw backup create --verify"]
+    }
+  ],
+  "phase1Config": {
+    "status": "desired runtime config, not applied yet; apply with openclaw config set after step 1",
+    "models.providers.litellm": {
+      "baseUrl": "https://litellm.viewport.llc/v1",
+      "apiKey": "${LITELLM_API_KEY}",
+      "api": "openai-completions"
+    },
+    "agents.defaults.model.fallbacks": [
+      "openai/gpt-5.5",
+      "litellm/glm-45-flash",
+      "litellm/glm-47-flash"
+    ],
+    "agents.defaults.heartbeat": {
+      "target": "telegram",
+      "to": "${TELEGRAM_HOME_CHANNEL}",
+      "accountId": "default"
+    },
+    "messages.visibleReplies": "automatic",
+    "notes": [
+      "providers.litellm: docs/providers/litellm.md@v2026.9.5:61-63; fallbacks: docs/concepts/model-failover.md@v2026.9.5:14,119; visibleReplies: docs/gateway/config-agents/messages-and-talk.md@v2026.9.5:93",
+      "heartbeat: target telegram needs an explicit to (chat id, stored as a string) and accountId on multi-account channels, which must match a configured account or delivery is skipped (docs/gateway/heartbeat.md@v2026.9.5:85-87,241-254,296,305-311); the live Telegram channel has one account, default (key read 2026-09-30)",
+      "${NAME} is substituted from the gateway env; a missing or empty name stays unresolved with a warning (docs/gateway/configuration/environment-variables.md@v2026.9.5:45-58), so LITELLM_API_KEY and TELEGRAM_HOME_CHANNEL must be set in the Dokploy env before this is applied"
+    ]
+  },
+  "rollback": {
+    "image": "viewport-corp/openclaw@sha256:46502ae3633270c5e27b1f8c7095761e223490aaa6cdf4fdc0a4337201f27fa0",
+    "localTag": "viewport-corp/openclaw:v2026.7.1-2-viewport.572.11a03430c8-full",
+    "imageNote": "local-only on the docker-viewport daemon (this reference resolves; the ghcr.io/ form does not); never prune it",
+    "stateNote": "an image rollback does not undo Doctor migrations; restore the verified pre-upgrade state backup together with this image"
+  },
   "network": {
     "external": true,
     "name": "fork-openclaw_default",
     "nameEnv": "OPENCLAW_NETWORK_NAME",
     "gatewayService": "openclaw-gateway",
-    "gatewayIpv4Address": "172.31.16.2",
-    "gatewayIpv4AddressEnv": "OPENCLAW_IPV4_ADDRESS"
+    "gatewayAlias": "openclaw-gateway",
+    "hostGatewayPort": "127.0.0.1:47295"
   }
 }
