@@ -1,20 +1,39 @@
 # Isolated validation only. Every mutable stage identity/path must be explicit.
+# Stage never sees live secrets: no host secret-file mount, no Dokploy .env file, and the channel
+# token names are forced empty. The copied stage config must disable every channel.
 name: ${OPENCLAW_STAGE_PROJECT:?set an isolated stage project name}
 
-x-openclaw-image: &openclaw-image ${OPENCLAW_IMAGE:?set the GitHub-published candidate image}
+x-openclaw-image: &openclaw-image ${OPENCLAW_IMAGE:?set the reviewed candidate image digest}
+
+x-stage-env: &stage-env
+  HOME: /home/node
+  OPENCLAW_HOME: /home/node
+  OPENCLAW_STATE_DIR: /home/node/.openclaw
+  OPENCLAW_CONFIG_PATH: /home/node/.openclaw/openclaw.json
+  OPENCLAW_CONFIG_DIR: /home/node/.openclaw
+  OPENCLAW_WORKSPACE_DIR: /home/node/.openclaw/workspace
+  OPENCLAW_GATEWAY_PORT: "18789"
+  OPENCLAW_GATEWAY_TOKEN: ${OPENCLAW_STAGE_GATEWAY_TOKEN:?set the stage-only gateway token}
+  TZ: ${OPENCLAW_TZ:-UTC}
+  TELEGRAM_BOT_TOKEN: ""
+  DISCORD_BOT_TOKEN: ""
+  SLACK_BOT_TOKEN: ""
+  SLACK_APP_TOKEN: ""
+  MODERNLAO_TELEGRAM_BOT_TOKEN: ""
+  IMPORTED_SLACK_BOT_TOKEN: ""
 
 services:
   stage-config-check:
     image: *openclaw-image
     container_name: ${OPENCLAW_STAGE_CONFIG_CHECK_CONTAINER:?set an isolated config-check container name}
     user: "1000:1000"
-    entrypoint: [/usr/bin/tini, -s, --, /bin/sh, -ec]
+    entrypoint: [tini, -s, --, /bin/sh, -ec]
     command:
       - |
-        . /run/openclaw-secrets/runtime.env
         node /app/openclaw.mjs config validate
         node /app/openclaw.mjs secrets audit --check
-        node /app/deploy/validate-stage-config.mjs /home/node/.openclaw/openclaw.json stage
+        node /viewport/deploy/validate-stage-config.mjs /home/node/.openclaw/openclaw.json stage
+    environment: *stage-env
     network_mode: none
     restart: "no"
     read_only: true
@@ -22,14 +41,9 @@ services:
       - /tmp:size=64m,mode=1777,noexec,nosuid,nodev
     cap_drop: [ALL]
     security_opt: ["no-new-privileges:true"]
-    depends_on:
-      secret-init:
-        condition: service_healthy
     volumes:
-      - type: volume
-        source: projected-secrets
-        target: /run/openclaw-secrets
-        read_only: true
+      - ./validate-stage-config.mjs:/viewport/deploy/validate-stage-config.mjs:ro
+      - ../docs/reference/secretref-user-supplied-credentials-matrix.json:/viewport/docs/reference/secretref-user-supplied-credentials-matrix.json:ro
       - type: bind
         source: ${OPENCLAW_STAGE_CONFIG_SOURCE:?set the copied stage config path}
         target: /home/node/.openclaw
@@ -37,48 +51,14 @@ services:
         bind:
           create_host_path: false
 
-  secret-init:
-    image: *openclaw-image
-    container_name: ${OPENCLAW_STAGE_SECRET_INIT_CONTAINER:?set an isolated secret-init container name}
-    user: "0:0"
-    entrypoint: [/usr/bin/tini, -s, --, /bin/sh, -ec]
-    command:
-      - node /app/deploy/project-platformx-env.mjs /run/platformx.env /run/openclaw-secrets/runtime.env stage && exec sleep infinity
-    network_mode: none
-    restart: unless-stopped
-    read_only: true
-    cap_drop: [ALL]
-    cap_add: [CHOWN]
-    security_opt: ["no-new-privileges:true"]
-    healthcheck:
-      test:
-        - CMD-SHELL
-        - test -f /run/openclaw-secrets/runtime.env && test "$$(stat -c '%u:%g:%a' /run/openclaw-secrets/runtime.env)" = 1000:1000:400
-      timeout: 3s
-      interval: 5s
-      retries: 5
-      start_period: 5s
-    volumes:
-      - type: bind
-        source: /srv/viewport/secrets/platformx.env
-        target: /run/platformx.env
-        read_only: true
-        bind:
-          create_host_path: false
-      - type: volume
-        source: projected-secrets
-        target: /run/openclaw-secrets
-
   openclaw-gateway:
     image: *openclaw-image
     container_name: ${OPENCLAW_STAGE_GATEWAY_CONTAINER:?set an isolated gateway container name}
-    entrypoint: [/usr/bin/tini, -s, --, /app/deploy/openclaw-entrypoint.sh]
     command: [node, dist/index.js, gateway, --bind, lan, --port, "18789"]
+    environment: *stage-env
     depends_on:
       stage-config-check:
         condition: service_completed_successfully
-      secret-init:
-        condition: service_healthy
     restart: unless-stopped
     cap_drop: [NET_RAW, NET_ADMIN]
     security_opt: ["no-new-privileges:true"]
@@ -102,10 +82,6 @@ services:
       - "127.0.0.1:${OPENCLAW_STAGE_HOST_BRIDGE_PORT:?set an unused loopback port}:18790"
       - "127.0.0.1:${OPENCLAW_STAGE_HOST_MSTEAMS_PORT:?set an unused loopback port}:3978"
     volumes:
-      - type: volume
-        source: projected-secrets
-        target: /run/openclaw-secrets
-        read_only: true
       - type: bind
         source: ${OPENCLAW_STAGE_CONFIG_SOURCE:?set the copied stage config path}
         target: /home/node/.openclaw
@@ -126,15 +102,6 @@ services:
         target: /home/node/.codex
         bind:
           create_host_path: false
-
-volumes:
-  projected-secrets:
-    name: ${OPENCLAW_STAGE_SECRET_VOLUME:?set an isolated stage secret volume}
-    driver: local
-    driver_opts:
-      type: tmpfs
-      device: tmpfs
-      o: uid=0,gid=0,mode=0711,size=65536
 
 networks:
   default:

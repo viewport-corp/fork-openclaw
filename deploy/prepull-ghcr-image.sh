@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
-# Pre-pull the reviewed private GHCR digest into the docker-viewport daemon before Dokploy starts it.
+# Pre-pull the reviewed official GHCR digest into the docker-viewport daemon before Dokploy starts it.
+# The official image is public; the existing temporary-login step is kept unchanged.
 # Reads only GITHUB_TOKEN_VIEWPORT_CORP from /srv/viewport/secrets/platformx.env and uses temporary Docker auth under /run.
 
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"
@@ -29,7 +30,7 @@ if [[ ! -r "$OPENCLAW_PREPULL_SECRETS_FILE" ]]; then
   exit 66
 fi
 
-if [[ ! "$OPENCLAW_PREPULL_REVIEWED_IMAGE" =~ ^ghcr\.io/viewport-corp/fork-openclaw@sha256:[a-f0-9]{64}$ ]]; then
+if [[ ! "$OPENCLAW_PREPULL_REVIEWED_IMAGE" =~ ^ghcr\.io/openclaw/openclaw:[0-9]{4}\.[0-9]+\.[0-9]+@sha256:[a-f0-9]{64}$ ]]; then
   echo "Reviewed image in deploy/dokploy.desired-state.json is invalid" >&2
   exit 78
 fi

@@ -5,13 +5,45 @@
   "customGitBranch": "main",
   "composePath": "deploy/dokploy.production.yml",
   "composeType": "docker-compose",
-  "image": "ghcr.io/viewport-corp/fork-openclaw@sha256:2062f17703b2c109e9e39aed73e3c7355e17016e2acc0e8df457481eed333ef2",
+  "image": "ghcr.io/openclaw/openclaw:2026.9.5@sha256:ea298b62be8955d3ef750e2004a610dd90c3a30e5f9886e5d654d78a0c573218",
+  "imageRevision": "ec9c1a13db8938e5a3eaa51fca2e981cde2395a9",
+  "upgradePath": [
+    {
+      "step": 1,
+      "image": "ghcr.io/openclaw/openclaw:2026.9.5@sha256:ea298b62be8955d3ef750e2004a610dd90c3a30e5f9886e5d654d78a0c573218",
+      "revision": "ec9c1a13db8938e5a3eaa51fca2e981cde2395a9",
+      "before": [
+        "openclaw backup create --verify (old image, gateway running)",
+        "openclaw config unset channels.telegram.allowBots (old image; strict schema on the official image)"
+      ],
+      "after": [
+        "openclaw plugins install clawhub:@openclaw/discord",
+        "openclaw plugins install clawhub:@openclaw/slack",
+        "openclaw plugins install clawhub:@openclaw/groq-provider",
+        "openclaw doctor --fix",
+        "openclaw config validate"
+      ]
+    },
+    {
+      "step": 2,
+      "image": "ghcr.io/openclaw/openclaw:2026.9.6@sha256:0a5ff5e682e62afa19149df126aa50063bf65ef885b5c94713ce32dc0eb12e15",
+      "revision": "eb377ac59e6c9fd6c7705028034812becf00271b",
+      "gate": "only after step 1 Doctor migrations pass; recheck GitHub Latest stable first and pin that instead if newer",
+      "before": ["openclaw backup create --verify"]
+    }
+  ],
+  "rollback": {
+    "image": "viewport-corp/openclaw@sha256:46502ae3633270c5e27b1f8c7095761e223490aaa6cdf4fdc0a4337201f27fa0",
+    "localTag": "viewport-corp/openclaw:v2026.7.1-2-viewport.572.11a03430c8-full",
+    "imageNote": "local-only on the docker-viewport daemon (this reference resolves; the ghcr.io/ form does not); never prune it",
+    "stateNote": "an image rollback does not undo Doctor migrations; restore the verified pre-upgrade state backup together with this image"
+  },
   "network": {
     "external": true,
     "name": "fork-openclaw_default",
     "nameEnv": "OPENCLAW_NETWORK_NAME",
     "gatewayService": "openclaw-gateway",
-    "gatewayIpv4Address": "172.31.16.2",
-    "gatewayIpv4AddressEnv": "OPENCLAW_IPV4_ADDRESS"
+    "gatewayAlias": "openclaw-gateway",
+    "hostGatewayPort": "127.0.0.1:47295"
   }
 }
