@@ -44,6 +44,30 @@
       "before": ["openclaw backup create --verify"]
     }
   ],
+  "phase1Config": {
+    "status": "desired runtime config, not applied yet; apply with openclaw config set after step 1",
+    "models.providers.litellm": {
+      "baseUrl": "https://litellm.viewport.llc/v1",
+      "apiKey": "${LITELLM_API_KEY}",
+      "api": "openai-completions"
+    },
+    "agents.defaults.model.fallbacks": [
+      "openai/gpt-5.5",
+      "litellm/glm-45-flash",
+      "litellm/glm-47-flash"
+    ],
+    "agents.defaults.heartbeat": {
+      "target": "telegram",
+      "to": "${TELEGRAM_HOME_CHANNEL}",
+      "accountId": "default"
+    },
+    "messages.visibleReplies": "automatic",
+    "notes": [
+      "providers.litellm: docs/providers/litellm.md@v2026.9.5:61-63; fallbacks: docs/concepts/model-failover.md@v2026.9.5:14,119; visibleReplies: docs/gateway/config-agents/messages-and-talk.md@v2026.9.5:93",
+      "heartbeat: target telegram needs an explicit to (chat id, stored as a string) and accountId on multi-account channels, which must match a configured account or delivery is skipped (docs/gateway/heartbeat.md@v2026.9.5:85-87,241-254,296,305-311); the live Telegram channel has one account, default (key read 2026-09-30)",
+      "${NAME} is substituted from the gateway env; a missing or empty name stays unresolved with a warning (docs/gateway/configuration/environment-variables.md@v2026.9.5:45-58), so LITELLM_API_KEY and TELEGRAM_HOME_CHANNEL must be set in the Dokploy env before this is applied"
+    ]
+  },
   "rollback": {
     "image": "viewport-corp/openclaw@sha256:46502ae3633270c5e27b1f8c7095761e223490aaa6cdf4fdc0a4337201f27fa0",
     "localTag": "viewport-corp/openclaw:v2026.7.1-2-viewport.572.11a03430c8-full",

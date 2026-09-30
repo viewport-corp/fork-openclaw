@@ -39,6 +39,12 @@ for (const plugin of ["discord", "slack", "groq-provider"]) {
   assert.ok(at >= 0 && at < bridgeDoctor, `${install} must run in preStart before doctor --fix`);
 }
 assert.equal(bridge.after.join("\n").includes("plugins install"), false);
+// heartbeat.md: an explicit Telegram target needs its recipient and account.
+assert.deepEqual(desired.phase1Config["agents.defaults.heartbeat"], {
+  target: "telegram",
+  to: "${TELEGRAM_HOME_CHANNEL}",
+  accountId: "default",
+});
 assert.equal(
   desired.rollback.image,
   "viewport-corp/openclaw@sha256:46502ae3633270c5e27b1f8c7095761e223490aaa6cdf4fdc0a4337201f27fa0",
@@ -103,7 +109,8 @@ for (const line of envBlock.split("\n").filter((entry) => !entry.trimStart().sta
   }
 }
 assert.equal(new Set(envNames).size, envNames.length);
-for (const name of requiredEnv) {
+// Required names, plus the names phase1Config substitutes.
+for (const name of [...requiredEnv, "LITELLM_API_KEY", "TELEGRAM_HOME_CHANNEL"]) {
   assert.ok(envNames.includes(name), `${name} missing from the production environment`);
 }
 
