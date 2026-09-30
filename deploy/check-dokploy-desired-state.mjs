@@ -60,6 +60,35 @@ for (const state of ["config", "workspace", "auth-secrets", "codex-auth", "ssh"]
   );
 }
 
+// Env NAMES only: every production entry is a pinned container path or a same-name reference.
+assert.equal(compose.includes("env_file"), false);
+const pinnedEnv = new Map([
+  ["HOME", "/home/node"],
+  ["OPENCLAW_HOME", "/home/node"],
+  ["OPENCLAW_STATE_DIR", "/home/node/.openclaw"],
+  ["OPENCLAW_CONFIG_PATH", "/home/node/.openclaw/openclaw.json"],
+  ["OPENCLAW_CONFIG_DIR", "/home/node/.openclaw"],
+  ["OPENCLAW_WORKSPACE_DIR", "/home/node/.openclaw/workspace"],
+  ["OPENCLAW_GATEWAY_PORT", '"18789"'],
+  ["TZ", "${OPENCLAW_TZ:-UTC}"],
+]);
+const envBlock = compose.split("\n    environment:\n")[1].split("\n    networks:\n")[0];
+const envNames = [];
+for (const line of envBlock.split("\n").filter((entry) => !entry.trimStart().startsWith("#"))) {
+  const [, name, value] = /^      ([A-Z][A-Z0-9_]*): (.+)$/u.exec(line) ?? [];
+  assert.ok(name, `unexpected environment line: ${line}`);
+  envNames.push(name);
+  if (pinnedEnv.has(name)) {
+    assert.equal(value, pinnedEnv.get(name));
+    continue;
+  }
+  assert.match(value, new RegExp(`^\\$\\{${name}(?::[-?][^}]*)?\\}$`, "u"));
+}
+assert.equal(new Set(envNames).size, envNames.length);
+for (const name of ["OPENCLAW_GATEWAY_TOKEN", "TELEGRAM_BOT_TOKEN"]) {
+  assert.match(envBlock, new RegExp(`\n      ${name}: \\$\\{${name}:\\?`, "u"));
+}
+
 // The official image has no fork helpers and runs its own entrypoint.
 for (const text of [compose, stageCompose]) {
   assert.equal(text.includes("/app/deploy/"), false);
