@@ -12,6 +12,8 @@
       "step": 1,
       "image": "ghcr.io/openclaw/openclaw:2026.9.5@sha256:ea298b62be8955d3ef750e2004a610dd90c3a30e5f9886e5d654d78a0c573218",
       "revision": "ec9c1a13db8938e5a3eaa51fca2e981cde2395a9",
+      "bridgeCondition": "installs older than June 2026 upgrade to 2026.9.5 first, run its Doctor, then latest; latest Doctor stops on retired config keys and points back to this bridge (docs/install/updating.md@v2026.9.7:20-32)",
+      "bridgeApplies": "yes: the runtime is the fork 2026.7.1 (config meta.lastTouchedVersion 2026.7.1), but the mounted state is older than June 2026 (config dir files from 2026-03-22 and 2026-03-29, identity/device.json 2026-05-11; read-only stat 2026-09-30). The 2026.7.1 runtime already imported tasks/runs.sqlite, flows/registry.sqlite and plugin-state/state.sqlite (only *.migrated copies remain), so the bridge is kept for retired config keys and any remaining pre-June state. Doctor imports channel state only for enabled channels and accounts (updating.md@v2026.9.7:53-58)",
       "before": [
         "openclaw backup create --verify (old image, gateway running)",
         "openclaw config unset channels.telegram.allowBots (old image; strict schema on the official image)",
