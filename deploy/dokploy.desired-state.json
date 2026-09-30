@@ -26,9 +26,11 @@
     },
     {
       "step": 2,
-      "image": "ghcr.io/openclaw/openclaw:2026.9.6@sha256:0a5ff5e682e62afa19149df126aa50063bf65ef885b5c94713ce32dc0eb12e15",
-      "revision": "eb377ac59e6c9fd6c7705028034812becf00271b",
-      "gate": "only after step 1 Doctor migrations pass; recheck GitHub Latest stable first and pin that instead if newer",
+      "image": "ghcr.io/openclaw/openclaw:2026.9.7@sha256:0da12cd49983fcb5e4915fd3135ce7a33d82f93649b1df6964946d2c1d1dbcfc",
+      "revision": "c074824a27c96d3983043f9eeb33823cd1772d8c",
+      "release": "v2026.9.7 = GitHub Latest (draft=false, prerelease=false, published 2026-09-30T04:44:14Z); registry read 2026-09-30: tags 2026.9.7 and latest both resolve to this index digest, amd64 revision label = peeled tag commit",
+      "gate": "only after step 1 Doctor passes and 2026.9.5 serves healthy; re-read GitHub Latest and the ghcr.io index digest before the pin PR and again before deploy, and pin a newer stable with its own registry-read digest if one exists",
+      "startNote": "this image's entrypoint (docker-entrypoint.mjs) runs doctor --fix --non-interactive before the compose gateway command (docs/install/docker.md@v2026.9.7:228-234)",
       "before": ["openclaw backup create --verify"]
     }
   ],
