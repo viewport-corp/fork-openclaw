@@ -60,8 +60,10 @@ for (const state of ["config", "workspace", "auth-secrets", "codex-auth", "ssh"]
   );
 }
 
-// Env NAMES only: every production entry is a pinned container path or a same-name reference.
+// Env NAMES only: every production entry is a pinned container path, a required
+// ${NAME:?} reference, or a bare optional key (omitted when missing, never "").
 assert.equal(compose.includes("env_file"), false);
+const requiredEnv = new Set(["OPENCLAW_GATEWAY_TOKEN", "TELEGRAM_BOT_TOKEN"]);
 const pinnedEnv = new Map([
   ["HOME", "/home/node"],
   ["OPENCLAW_HOME", "/home/node"],
@@ -75,18 +77,24 @@ const pinnedEnv = new Map([
 const envBlock = compose.split("\n    environment:\n")[1].split("\n    networks:\n")[0];
 const envNames = [];
 for (const line of envBlock.split("\n").filter((entry) => !entry.trimStart().startsWith("#"))) {
-  const [, name, value] = /^      ([A-Z][A-Z0-9_]*): (.+)$/u.exec(line) ?? [];
+  const [, name, value] = /^      ([A-Z][A-Z0-9_]*):(?: (.+))?$/u.exec(line) ?? [];
   assert.ok(name, `unexpected environment line: ${line}`);
   envNames.push(name);
   if (pinnedEnv.has(name)) {
     assert.equal(value, pinnedEnv.get(name));
-    continue;
+  } else if (requiredEnv.has(name)) {
+    assert.match(value ?? "", new RegExp(`^\\$\\{${name}:\\?[^}]+\\}$`, "u"));
+  } else {
+    assert.equal(
+      value,
+      undefined,
+      `${name} must be a bare key: NAME: \${NAME} passes "" when missing`,
+    );
   }
-  assert.match(value, new RegExp(`^\\$\\{${name}(?::[-?][^}]*)?\\}$`, "u"));
 }
 assert.equal(new Set(envNames).size, envNames.length);
-for (const name of ["OPENCLAW_GATEWAY_TOKEN", "TELEGRAM_BOT_TOKEN"]) {
-  assert.match(envBlock, new RegExp(`\n      ${name}: \\$\\{${name}:\\?`, "u"));
+for (const name of requiredEnv) {
+  assert.ok(envNames.includes(name), `${name} missing from the production environment`);
 }
 
 // The official image has no fork helpers and runs its own entrypoint.
@@ -118,6 +126,10 @@ assert.equal(
 
 const configCheckTmpfs = "    tmpfs:\n" + "      - /tmp:size=64m,mode=1777,noexec,nosuid,nodev\n";
 assert.equal(stageCompose.split(configCheckTmpfs).length - 1, 1);
+
+// Rendered env proof. It runs from here because test-projector already runs this checker;
+// the workflow file is in its push.paths, so editing it would republish the fork image on merge.
+await import("./dokploy-production-env.test.mjs");
 
 process.stdout.write(
   JSON.stringify({ dokployDesiredStateSafe: true, composeId: desired.composeId }) + "\n",
